@@ -7,6 +7,21 @@ permissions:
 jobs:
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_HOST_AUTH_METHOD: trust
+          POSTGRES_DB: usdc_tests
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s --health-timeout 5s --health-retries 12
+    env:
+      USDC_TEST_POSTGRES: Host=127.0.0.1;Port=5432;Database=usdc_tests;Username=postgres
+      USDC_TEST_USDT_PATH: ${{ github.workspace }}/artifacts/usdt
     steps:
       - uses: actions/checkout@v4
         with:
@@ -14,5 +29,18 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: 10.0.x
+      - uses: actions/checkout@v4
+        with:
+          repository: btcpayserver-tether/BTCPayServer.Plugins.USDt
+          ref: cacb4e8c3d2672ae966853bc833af93a98e4c0b1
+          path: artifacts/reference-usdt
+          submodules: recursive
+      - run: dotnet publish Plugins/BTCPayServer.Plugins.USDC -c Release -m:1 -p:StaticWebAssetsEnabled=false -o artifacts/usdc
+      - run: dotnet publish artifacts/reference-usdt/BTCPayServer.Plugins.USDt -c Release -m:1 -p:StaticWebAssetsEnabled=false -o artifacts/usdt
       - run: dotnet test BTCPayServer.Plugins.USDC.Tests -c Release -m:1 -p:StaticWebAssetsEnabled=false --logger trx
-      - run: dotnet publish Plugins/BTCPayServer.Plugins.USDC -c Release -p:StaticWebAssetsEnabled=false -o artifacts/usdc
+      - run: dotnet run --project submodules/btcpayserver/BTCPayServer.PluginPacker -c Release -- artifacts/usdc BTCPayServer.Plugins.USDC artifacts/packed
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: test-results
+          path: BTCPayServer.Plugins.USDC.Tests/TestResults/*.trx

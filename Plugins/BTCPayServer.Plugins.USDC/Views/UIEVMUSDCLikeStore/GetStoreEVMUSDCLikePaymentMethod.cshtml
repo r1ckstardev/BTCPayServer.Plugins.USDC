@@ -33,7 +33,7 @@
 <div class="row">
     <div class="col-md-8">
         <p class="mb-0">
-            Configures the @Model.ChainDisplayName addresses used for payment by your customers. Each address is reserved for the time of payment and settlement, so we advise you to set several addresses.
+            Add fresh @Model.ChainDisplayName receiving addresses. Each address is permanently assigned to one invoice, including after expiration or settlement, so a late transfer cannot pay a different invoice. Replenish the pool before it runs out; removing and re-adding an address does not make it reusable.
         </p>
         <form method="post"
               asp-route-storeId="@Context.GetRouteValue("storeId")"
@@ -55,7 +55,7 @@
                     <th>Address</th>
                     <th>Balance</th>
                     <th>
-                        <span data-bs-toggle="tooltip" data-bs-placement="top" title="Addresses are attached to pending payments and free after settlement.">Free or used? <vc:icon symbol="info"/></span>
+                        <span data-bs-toggle="tooltip" data-bs-placement="top" title="Assigned addresses are never reused for another invoice.">Unused or assigned? <vc:icon symbol="info"/></span>
                     </th>
                     <th class="actions-col" permission="@Policies.CanModifyStoreSettings">Actions</th>
                 </tr>

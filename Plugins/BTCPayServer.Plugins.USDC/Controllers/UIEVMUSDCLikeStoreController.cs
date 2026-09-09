@@ -30,7 +30,7 @@ public class UIEVMUSDCLikeStoreController(
     StoreRepository storeRepository,
     EVMUSDCRPCProvider evmUsdTRpcProvider,
     PaymentMethodHandlerDictionary handlers,
-    USDCTrackedInvoiceProvider trackedInvoiceProvider,
+    USDCAddressAllocator addressAllocator,
     DisplayFormatter displayFormatter,
     USDCPluginConfiguration pluginConfiguration,
     EventAggregator eventAggregator) : Controller
@@ -90,7 +90,7 @@ public class UIEVMUSDCLikeStoreController(
         var balances =
             await evmUsdTRpcProvider.GetBalances(paymentMethodId, [.. matchedPaymentMethodConfig.Addresses]);
         var reservedAddresses =
-            await EVMUSDCPaymentMethodConfig.GetReservedAddresses(paymentMethodId, trackedInvoiceProvider);
+            await addressAllocator.GetUsedAddresses(paymentMethodId, matchedPaymentMethodConfig.Addresses);
 
         return View(new EditEVMUSDCPaymentMethodViewModel
         {
@@ -164,6 +164,7 @@ public class UIEVMUSDCLikeStoreController(
         {
             var addresses = viewModel.Address.Split(new char[] { ',', ';', ' ', '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries)
             .Where(EVMAddressHelper.IsValid)
+                .Where(a => !string.Equals(a, configuration.SmartContractAddress, StringComparison.OrdinalIgnoreCase))
                 .Select(a => a.ToLowerInvariant())
                 .Where(s => currentPaymentMethodConfig.Addresses.Contains(s) == false).ToArray();
 

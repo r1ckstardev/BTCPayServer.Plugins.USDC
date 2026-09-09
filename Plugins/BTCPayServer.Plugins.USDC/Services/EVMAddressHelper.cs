@@ -9,6 +9,6 @@ public static class EVMAddressHelper
         if (string.IsNullOrWhiteSpace(address)) return false;
         // quick format check
         if (!AddressUtil.Current.IsValidEthereumAddressHexFormat(address)) return false;
-        return true;
+        return !string.Equals(address, "0x0000000000000000000000000000000000000000", System.StringComparison.OrdinalIgnoreCase);
     }
 }

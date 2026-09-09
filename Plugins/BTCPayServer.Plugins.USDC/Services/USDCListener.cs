@@ -34,6 +34,7 @@ public abstract class USDCListener<TConfigurationItem, TPaymentData>(
     where TPaymentData : USDCPaymentData
 {
     private CancellationTokenSource? _cts;
+    private Task _workers = Task.CompletedTask;
 
     protected abstract IReadOnlyDictionary<PaymentMethodId, TConfigurationItem> GetConfigurations();
     protected abstract string GetListenerStateSettingKey(TConfigurationItem config);
@@ -70,15 +71,23 @@ public abstract class USDCListener<TConfigurationItem, TPaymentData>(
             return Task.CompletedTask;
 
         _cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        foreach (var configurationItem in configurations.Values)
-            _ = LoopIndex(configurationItem, _cts.Token);
+        _workers = Task.WhenAll(configurations.Values.Select(configuration => LoopIndex(configuration, _cts.Token)));
         return Task.CompletedTask;
     }
 
-    public Task StopAsync(CancellationToken cancellationToken)
+    public async Task StopAsync(CancellationToken cancellationToken)
     {
         _cts?.Cancel();
-        return Task.CompletedTask;
+        try { await _workers.WaitAsync(cancellationToken); }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested) { }
+        finally
+        {
+            if (_workers.IsCompleted)
+            {
+                _cts?.Dispose();
+                _cts = null;
+            }
+        }
     }
 
     private async Task LoopIndex(TConfigurationItem configurationItem, CancellationToken stoppingToken)
@@ -276,6 +285,10 @@ public abstract class USDCListener<TConfigurationItem, TPaymentData>(
             if (!invoicesPerAddress.TryGetValue(match.DestinationKey, out var invoice))
                 continue;
 
+            // Backlog scanning must not turn an address's older deposits into a new invoice payment.
+            if (paymentTimestamp.ToUnixTimeSeconds() < invoice.InvoiceTime.ToUnixTimeSeconds())
+                continue;
+
             await HandlePaymentData(
                 paymentMethodId,
                 match.From,
@@ -362,14 +375,9 @@ public abstract class USDCListener<TConfigurationItem, TPaymentData>(
 
     private DateTimeOffset GetPaymentTimestamp(BlockWithTransactions block)
     {
-        var now = DateTimeOffset.UtcNow;
         if (USDCListenerShared.TryGetBlockTimestamp(block.Timestamp, out var timestamp))
             return timestamp;
-
-        logger.LogWarning(
-            "Block {BlockNumber} did not contain a valid Unix timestamp; using the current time for detected payments",
-            block.Number);
-        return now;
+        throw new InvalidOperationException($"Block {block.Number} did not contain a valid Unix timestamp.");
     }
 
     private static IEnumerable<PaymentEntity> GetPendingPayments(InvoiceEntity invoice, PaymentMethodId paymentMethodId)

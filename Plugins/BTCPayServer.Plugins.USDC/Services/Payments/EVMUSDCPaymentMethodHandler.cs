@@ -1,4 +1,5 @@
 using System;
+using System.Linq;
 using System.Threading.Tasks;
 using BTCPayServer.Data;
 using BTCPayServer.Payments;
@@ -13,7 +14,7 @@ public class EVMUSDCPaymentMethodHandler(
     EVMUSDCLikeConfigurationItem configurationItem,
     EVMUSDCRPCProvider rpcProvider,
     CurrencyNameTable currencyNameTable,
-    USDCTrackedInvoiceProvider trackedInvoiceProvider) : IPaymentMethodHandler
+    USDCAddressAllocator addressAllocator) : IPaymentMethodHandler
 {
     public JsonSerializer Serializer { get; } = BlobSerializer.CreateSerializer().Serializer;
 
@@ -38,11 +39,12 @@ public class EVMUSDCPaymentMethodHandler(
 
         var config = ParsePaymentMethodConfig(context.PaymentMethodConfig);
         var details = CreatePaymentPromptDetails(config);
-        var availableAddress = await config
-                                   .GetOneNotReservedAddress(context.PaymentMethodId, trackedInvoiceProvider) ??
+        var availableAddress = await addressAllocator.Allocate(context.PaymentMethodId,
+                                   context.Store.Id, context.InvoiceEntity.Id, config.Addresses) ??
                                throw new PaymentMethodUnavailableException(
-                                   $"All your {configurationItem.Chain} addresses are currently waiting payment");
+                                   $"No unused {configurationItem.Chain} receiving addresses remain. Add new addresses to the store.");
         context.Prompt.Destination = availableAddress;
+        context.TrackedDestinations.Add(availableAddress);
         context.Prompt.PaymentMethodFee = 0;
         context.Prompt.Details = JObject.FromObject(details, Serializer);
     }
@@ -85,6 +87,11 @@ public class EVMUSDCPaymentMethodHandler(
     public Task ValidatePaymentMethodConfig(PaymentMethodConfigValidationContext validationContext)
     {
         var config = ParsePaymentMethodConfig(validationContext.Config);
+        if (config.Addresses is null || config.Addresses.Any(a => !EVMAddressHelper.IsValid(a) ||
+                string.Equals(a, configurationItem.SmartContractAddress, StringComparison.OrdinalIgnoreCase)))
+            validationContext.ModelState.AddModelError(nameof(config.Addresses), "Receiving addresses must be valid nonzero Ethereum addresses and cannot be the USDC contract.");
+        else
+            config.Addresses = config.Addresses.Select(a => a.ToLowerInvariant()).Distinct().ToArray();
         var previousConfig = validationContext.PreviousConfig is null
             ? null
             : ParsePaymentMethodConfig(validationContext.PreviousConfig);
