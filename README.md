@@ -4,6 +4,14 @@ A separately installable, non-custodial BTCPay Server plugin for native USDC on 
 
 This is an initial implementation for review, not a published plugin-store release.
 
+## Production payment node
+
+**On mainnet, the plugin connects by default to `https://ethereum.publicnode.com`, a public Ethereum JSON-RPC endpoint.** It does not provision an Ethereum node. Payment detection depends on the configured endpoint's availability and finalized history.
+
+To use your own Ethereum node or another RPC provider, set the endpoint in **BTCPay's USDC server settings**, or set `USDC_ETHEREUM_JSONRPC_URI` in BTCPay configuration. **Saved server settings take precedence.** The endpoint must support finalized-block and transfer-log queries, plus the validation methods listed in [store setup](#configure-a-test-store). Keep authenticated endpoint URLs in private server configuration.
+
+The plugin monitors incoming USDC transfers; private keys remain in your external wallet, and the plugin does not send funds. On testnet/regtest, the default endpoint is `https://sepolia.publicnode.com`, overridden with `USDC_SEPOLIA_JSONRPC_URI` or the USDC server settings.
+
 ## Networks
 
 | BTCPay network | Payment method | EVM chain ID | Native USDC contract |
