@@ -85,7 +85,7 @@ public class EVMUSDCListener(
             return [];
 
         var web3Client = rpcProvider.GetWeb3Client(paymentMethodId);
-        await rpcProvider.ValidateNetworkAsync(paymentMethodId);
+        await rpcProvider.ValidateNetworkAsync(paymentMethodId, web3Client);
         var transferEvent = web3Client.Eth.GetEvent<TransferEventDTO>(configuration.SmartContractAddress.ToLowerInvariant());
         List<EventLog<TransferEventDTO>> changes = [];
         var destinationBatches = BatchDestinationAddresses(invoicesPerAddress.Keys);

@@ -53,6 +53,8 @@ public class HostSmokeTests
         Directory.CreateDirectory(plugin);
         var published = Path.Combine(root, "artifacts", "usdc");
         Assert.True(File.Exists(Path.Combine(published, "BTCPayServer.Plugins.USDC.dll")), "Publish the plugin to artifacts/usdc before running host integration tests.");
+        Assert.Equal(System.Security.Cryptography.SHA256.HashData(File.ReadAllBytes(typeof(USDCPlugin).Assembly.Location)),
+            System.Security.Cryptography.SHA256.HashData(File.ReadAllBytes(Path.Combine(published, "BTCPayServer.Plugins.USDC.dll"))));
         foreach (var file in Directory.GetFiles(published)) File.Copy(file, Path.Combine(plugin, Path.GetFileName(file)));
         if (coInstall)
         {
@@ -264,11 +266,27 @@ public class HostSmokeTests
                 ["Email"] = email, ["Password"] = password, ["Method"] = "Password"
             });
             replacementNode.FinalizedHeight = 107;
-            await SubmitForm(client, "/server/evmUSDClike/USDC-SEPOLIA", "form[enctype='multipart/form-data']",
-                new() { ["JsonRpcUri"] = replacementNode.Url });
+            // The old provider has the next block; the replacement is still behind. Switch while
+            // that block request is in flight to prove the cursor cannot skip its payment.
+            if (!coInstall)
+            {
+                replacementNode.ObserveEmptyLogsHeight = 108;
+                node.PauseBlockHeight = 108;
+                node.Transfer(108, switchedDestination, 1000000);
+                node.FinalizedHeight = 109;
+                await node.BlockRequestPaused.Task.WaitAsync(TimeSpan.FromSeconds(30));
+            }
+            try
+            {
+                await SubmitForm(client, "/server/evmUSDClike/USDC-SEPOLIA", "form[enctype='multipart/form-data']",
+                    new() { ["JsonRpcUri"] = replacementNode.Url });
+            }
+            finally { node.ResumeBlockRequest.TrySetResult(); }
+            if (!coInstall)
+                await replacementNode.EmptyLogResponseCreated.Task.WaitAsync(TimeSpan.FromSeconds(30));
             var activeConfiguration = host.Services.GetRequiredService<Configuration.USDCPluginConfiguration>();
             Assert.Equal(replacementNode.Url, activeConfiguration.EVMUSDCLikeConfigurationItems[pmi].JsonRpcUri.AbsoluteUri);
-            // The old endpoint stays healthy at height 107. Detection must switch without a restart/error.
+            // The old endpoint stays healthy. Detection must switch without a restart/error.
             replacementNode.Transfer(108, switchedDestination, 1000000);
             replacementNode.FinalizedHeight = 112;
             await Eventually(async () => (await api.GetInvoice(switchedInvoice.Id)).Status == InvoiceStatus.Settled);

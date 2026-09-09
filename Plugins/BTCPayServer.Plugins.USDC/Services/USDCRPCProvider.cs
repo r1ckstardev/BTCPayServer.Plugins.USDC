@@ -80,7 +80,7 @@ public abstract class USDCRPCProvider<TConfigurationItem>(
         return Summaries.ContainsKey(pmi) && IsAvailable(Summaries[pmi]);
     }
 
-    public abstract Task ValidateNetworkAsync(PaymentMethodId pmi);
+    public abstract Task ValidateNetworkAsync(PaymentMethodId pmi, Web3? client = null);
 
     private static bool IsAvailable(USDCRpcSummary summary)
     {
@@ -125,10 +125,9 @@ public abstract class USDCRPCProvider<TConfigurationItem>(
         var summary = new USDCRpcSummary();
         try
         {
-            await ValidateNetworkAsync(pmi);
-            summary.LatestBlockScanned = listenerState.LastBlockHeight;
-
             var web3Client = GetWeb3Client(pmi);
+            await ValidateNetworkAsync(pmi, web3Client);
+            summary.LatestBlockScanned = listenerState.LastBlockHeight;
             var syncingOutput = await web3Client.Eth.Syncing.SendRequestAsync();
             if (syncingOutput.IsSyncing)
             {

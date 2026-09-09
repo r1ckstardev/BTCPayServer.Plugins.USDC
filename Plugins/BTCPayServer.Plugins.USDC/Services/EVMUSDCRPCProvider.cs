@@ -33,10 +33,10 @@ public class EVMUSDCRPCProvider : USDCRPCProvider<EVMUSDCLikeConfigurationItem>
         return _usdtPluginConfiguration.EVMUSDCLikeConfigurationItems;
     }
 
-    public override async Task ValidateNetworkAsync(PaymentMethodId pmi)
+    public override async Task ValidateNetworkAsync(PaymentMethodId pmi, Web3? client = null)
     {
         var config = GetConfigurations()[pmi];
-        var web3 = GetWeb3Client(pmi);
+        var web3 = client ?? GetWeb3Client(pmi);
         var chainId = await web3.Eth.ChainId.SendRequestAsync();
         if (chainId.Value != config.ChainId)
             throw new InvalidOperationException("The RPC endpoint is connected to the wrong USDC network.");

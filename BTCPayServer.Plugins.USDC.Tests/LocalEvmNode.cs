@@ -15,9 +15,15 @@ internal sealed class LocalEvmNode : IAsyncDisposable
     private readonly List<JObject> _logs = [];
     private readonly Dictionary<int, long> _timestamps = [];
     private int _failedRequests;
+    private volatile bool _stopping;
     public int FailedRequests => Volatile.Read(ref _failedRequests);
     public int FinalizedHeight { get; set; } = 100;
     public bool FailRequests { get; set; }
+    public int? PauseBlockHeight { get; set; }
+    public TaskCompletionSource BlockRequestPaused { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    public TaskCompletionSource ResumeBlockRequest { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    public int? ObserveEmptyLogsHeight { get; set; }
+    public TaskCompletionSource EmptyLogResponseCreated { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
     public string Url { get; }
     public LocalEvmNode()
     {
@@ -50,21 +56,32 @@ internal sealed class LocalEvmNode : IAsyncDisposable
     }
     private async Task Run()
     {
-        while (_listener.IsListening)
+        while (!_stopping)
         {
             HttpListenerContext context;
             try { context = await _listener.GetContextAsync(); }
-            catch (Exception) when (!_listener.IsListening) { break; }
+            catch (Exception) when (_stopping) { break; }
             try
             {
                 if (FailRequests) { Interlocked.Increment(ref _failedRequests); context.Response.StatusCode = 503; continue; }
                 using var reader = new StreamReader(context.Request.InputStream);
                 var request = JObject.Parse(await reader.ReadToEndAsync());
+                if (PauseBlockHeight is { } pausedHeight && request["method"]!.Value<string>() == "eth_getBlockByNumber" &&
+                    request["params"]![0]!.Value<string>() == "0x" + pausedHeight.ToString("x"))
+                {
+                    BlockRequestPaused.TrySetResult();
+                    await ResumeBlockRequest.Task;
+                }
                 var result = Reply(request);
+                if (ObserveEmptyLogsHeight is { } emptyHeight && result is JArray { Count: 0 } &&
+                    request["method"]!.Value<string>() == "eth_getLogs" &&
+                    request["params"]![0]!["fromBlock"]!.Value<string>() == "0x" + emptyHeight.ToString("x"))
+                    EmptyLogResponseCreated.TrySetResult();
                 var bytes = Encoding.UTF8.GetBytes(new JObject { ["jsonrpc"] = "2.0", ["id"] = request["id"], ["result"] = result }.ToString());
                 context.Response.ContentType = "application/json";
                 await context.Response.OutputStream.WriteAsync(bytes);
             }
+            catch (Exception) when (_stopping) { break; }
             finally { context.Response.Close(); }
         }
     }
@@ -97,6 +114,8 @@ internal sealed class LocalEvmNode : IAsyncDisposable
     }
     public async ValueTask DisposeAsync()
     {
+        _stopping = true;
+        ResumeBlockRequest.TrySetResult();
         _listener.Stop();
         await _worker;
         _listener.Close();

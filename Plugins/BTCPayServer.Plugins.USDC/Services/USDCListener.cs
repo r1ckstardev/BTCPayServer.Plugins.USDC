@@ -109,9 +109,9 @@ public abstract class USDCListener<TConfigurationItem, TPaymentData>(
                 }
 
                 // Do not initialize or advance a durable cursor from a different chain.
-                await rpcProvider.ValidateNetworkAsync(paymentMethodId);
-                var listenerState = await LoadTrackingState(configurationItem);
                 var web3Client = rpcProvider.GetWeb3Client(paymentMethodId);
+                await rpcProvider.ValidateNetworkAsync(paymentMethodId, web3Client);
+                var listenerState = await LoadTrackingState(configurationItem);
                 var latestBlockNumber = await EVMUSDCRPCProvider.GetFinalizedHeight(web3Client);
                 if (listenerState == null)
                 {
@@ -184,6 +184,10 @@ public abstract class USDCListener<TConfigurationItem, TPaymentData>(
                         if (block != null)
                         {
                             await OnNewBlockToIndex(paymentMethodId, invoices, block, stoppingToken);
+                            // If settings changed during the request, replay this block using the new
+                            // connection. Per-log payment IDs make already persisted transfers idempotent.
+                            if (!ReferenceEquals(web3Client.Client, rpcProvider.GetWeb3Client(paymentMethodId).Client))
+                                break;
                             logger.LogInformation("New block indexed for {Listener} {BlockNumber}",
                                 logContext, block.Number);
 
