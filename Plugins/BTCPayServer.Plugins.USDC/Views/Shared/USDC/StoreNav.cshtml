@@ -1,0 +1,12 @@
+@using BTCPayServer
+@using BTCPayServer.Abstractions.Contracts
+@using BTCPayServer.Plugins.USDC.Configuration
+@inject IScopeProvider ScopeProvider
+@inject USDCPluginConfiguration Configuration
+@foreach (var config in Configuration.EVMUSDCLikeConfigurationItems.Values)
+{
+    <li class="nav-item">
+        <a class="nav-link" asp-controller="UIEVMUSDCLikeStore" asp-action="GetStoreEVMUSDCLikePaymentMethod"
+           asp-route-storeId="@ScopeProvider.GetCurrentStoreId()" asp-route-paymentMethodId="@config.GetPaymentMethodId()">@config.DisplayName</a>
+    </li>
+}

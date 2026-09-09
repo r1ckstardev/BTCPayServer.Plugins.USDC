@@ -5,3 +5,8 @@ Plugins/packed
 .vs/
 *.DotSettings
 *.DotSettings.user
+*.log
+**/TestResults/
+artifacts/
+.env
+appsettings.dev.json

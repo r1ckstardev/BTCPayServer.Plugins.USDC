@@ -1,0 +1,10 @@
+@using BTCPayServer.Client
+@using BTCPayServer.Plugins.USDC.Configuration
+@inject USDCPluginConfiguration Configuration
+@foreach (var config in Configuration.EVMUSDCLikeConfigurationItems.Values)
+{
+    <li class="nav-item nav-item-sub" permission="@Policies.CanModifyServerSettings">
+        <a class="nav-link" asp-controller="UIEVMUSDCLikeServer" asp-action="GetServerConfig"
+           asp-route-paymentMethodId="@config.GetPaymentMethodId()">@config.DisplayName</a>
+    </li>
+}
