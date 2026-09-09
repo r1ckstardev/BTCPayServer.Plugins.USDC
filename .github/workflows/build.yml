@@ -22,6 +22,7 @@ jobs:
     env:
       USDC_TEST_POSTGRES: Host=127.0.0.1;Port=5432;Database=usdc_tests;Username=postgres
       USDC_TEST_USDT_PATH: ${{ github.workspace }}/artifacts/usdt
+      USDC_TEST_ANVIL_URL: http://127.0.0.1:48545
     steps:
       - uses: actions/checkout@v4
         with:
@@ -37,6 +38,14 @@ jobs:
           submodules: recursive
       - run: dotnet publish Plugins/BTCPayServer.Plugins.USDC -c Release -m:1 -p:StaticWebAssetsEnabled=false -o artifacts/usdc
       - run: dotnet publish artifacts/reference-usdt/BTCPayServer.Plugins.USDt -c Release -m:1 -p:StaticWebAssetsEnabled=false -o artifacts/usdt
+      - name: Start isolated Anvil for canonical USDC fork transactions
+        run: |
+          docker run --detach --name usdc-test-anvil -p 127.0.0.1:48545:8545 --entrypoint anvil ghcr.io/foundry-rs/foundry@sha256:0c00cb0bda1ab1b91c9a6bf60f4c76c09c1a8870824b6d4718afbabacf6f9a17 --host 0.0.0.0 --silent
+          for attempt in {1..30}; do
+            if curl -fsS -H 'Content-Type: application/json' --data '{"jsonrpc":"2.0","id":1,"method":"web3_clientVersion","params":[]}' http://127.0.0.1:48545 > /dev/null; then exit 0; fi
+            sleep 1
+          done
+          exit 1
       - run: dotnet test BTCPayServer.Plugins.USDC.Tests -c Release -m:1 -p:StaticWebAssetsEnabled=false --logger trx
       - run: dotnet run --project submodules/btcpayserver/BTCPayServer.PluginPacker -c Release -- artifacts/usdc BTCPayServer.Plugins.USDC artifacts/packed
       - uses: actions/upload-artifact@v4

@@ -66,7 +66,8 @@ public class HostSmokeTests
             ["datadir"] = data, ["plugindir"] = plugins,
             ["postgres"] = connection.ConnectionString,
             ["TEST_RUNNER_ENABLED"] = "true", ["disable-registration"] = "false",
-            ["USDC_SEPOLIA_JSONRPC_URI"] = node.Url
+            ["USDC_SEPOLIA_JSONRPC_URI"] = node.Url,
+            ["USDT_SEPOLIA_JSONRPC_URI"] = node.Url
         };
         IHost BuildHost() => Host.CreateDefaultBuilder()
             .UseEnvironment("Development")
@@ -112,6 +113,35 @@ public class HostSmokeTests
             {
                 Enabled = true, Config = new JObject { ["addresses"] = new JArray(destination, secondDestination, lateDestination) }
             });
+            const string usdtContract = "0xf02d1af3c9ec13f4e9e986f2de75da96d75a57b0";
+            BTCPayServer.Client.Models.InvoiceData? usdtInvoice = null;
+            if (coInstall)
+            {
+                await api.UpdateStorePaymentMethod(store.Id, "USDT-SEPOLIA", new UpdatePaymentMethodRequest
+                {
+                    Enabled = true, Config = new JObject { ["addresses"] = new JArray(destination) }
+                });
+                var usdtPmi = new PaymentMethodId("USDT-SEPOLIA");
+                // Resolve readiness from the dynamically installed assembly without a USDt project dependency.
+                var rpcType = handlers[usdtPmi].GetType().Assembly.GetType("BTCPayServer.Plugins.USDt.Services.EVMUSDtRPCProvider")!;
+                dynamic usdtRpc = host.Services.GetRequiredService(rpcType);
+                await Eventually(async () => { await usdtRpc.UpdateSummary(usdtPmi); return (bool)usdtRpc.IsAvailable(usdtPmi); });
+                usdtInvoice = await api.CreateInvoice(store.Id, new CreateInvoiceRequest
+                {
+                    Currency = "USDT", Amount = 1m,
+                    Checkout = new InvoiceDataBase.CheckoutOptions
+                    {
+                        PaymentMethods = ["USDT-SEPOLIA"], LazyPaymentMethods = false,
+                        SpeedPolicy = SpeedPolicy.HighSpeed, Expiration = TimeSpan.FromHours(1)
+                    }
+                });
+                var usdtMethod = Assert.Single(await api.GetInvoicePaymentMethods(usdtInvoice.Id));
+                Assert.Equal(destination, usdtMethod.Destination);
+                Assert.Contains(usdtContract, usdtMethod.PaymentLink, StringComparison.OrdinalIgnoreCase);
+                var usdtCheckout = await client.GetAsync(usdtInvoice.CheckoutLink);
+                usdtCheckout.EnsureSuccessStatusCode();
+                Assert.Contains("USDt", await usdtCheckout.Content.ReadAsStringAsync(), StringComparison.OrdinalIgnoreCase);
+            }
             var rpc = host.Services.GetRequiredService<EVMUSDCRPCProvider>();
             var pmi = new PaymentMethodId("USDC-SEPOLIA");
             await Eventually(async () => { await rpc.UpdateSummary(pmi); return rpc.IsAvailable(pmi); });
@@ -191,6 +221,7 @@ public class HostSmokeTests
             node.Transfer(103, secondDestination, 700000, 1);
             node.Transfer(103, secondDestination, 500000, 2);
             node.Transfer(103, secondDestination, 500000, 2); // Duplicate RPC log must not double-credit.
+            if (coInstall) node.Transfer(103, destination, 1000000, 3, usdtContract);
             node.FinalizedHeight = 104;
             node.FailRequests = false;
             await Eventually(async () => (await api.GetInvoice(invoice.Id)).Status == InvoiceStatus.Processing);
@@ -205,6 +236,14 @@ public class HostSmokeTests
             Assert.Equal(1.2m, overpaid.TotalPaid);
             Assert.Equal(2, overpaid.Payments.Count);
             Assert.Equal(InvoiceExceptionStatus.PaidOver, (await api.GetInvoice(secondInvoice.Id)).AdditionalStatus);
+            if (usdtInvoice is not null)
+            {
+                await Eventually(async () => (await api.GetInvoice(usdtInvoice.Id)).Status == InvoiceStatus.Settled);
+                var usdtPayment = Assert.Single(await api.GetInvoicePaymentMethods(usdtInvoice.Id));
+                Assert.Equal(1m, usdtPayment.TotalPaid);
+                Assert.Single(usdtPayment.Payments);
+                Assert.Equal(1m, (await api.GetInvoicePaymentMethods(invoice.Id)).Single().TotalPaid);
+            }
             await Eventually(async () => (await api.GetInvoice(lateInvoice.Id)).Status == InvoiceStatus.Expired);
 
             // Rebuild the entire host, including tracking caches, against its existing database.

@@ -60,13 +60,24 @@ In PowerShell use `$env:USDC_TEST_POSTGRES = '...'` instead of `export`. Never p
 
 To include USDt coexistence tests, publish `BTCPayServer.Plugins.USDt` from reference commit `cacb4e8c3d2672ae966853bc833af93a98e4c0b1` and set `USDC_TEST_USDT_PATH` to its absolute publish directory. CI provides PostgreSQL, publishes both plugins, and runs these tests. Without the relevant environment variables, database/coexistence tests explicitly report skipped.
 
+For canonical-contract transaction tests, start an isolated [Anvil development node](https://www.getfoundry.sh/anvil/index.html):
+
+```sh
+docker run --detach --name usdc-test-anvil -p 127.0.0.1:48545:8545 --entrypoint anvil ghcr.io/foundry-rs/foundry@sha256:0c00cb0bda1ab1b91c9a6bf60f4c76c09c1a8870824b6d4718afbabacf6f9a17 --host 0.0.0.0 --silent
+export USDC_TEST_ANVIL_URL='http://127.0.0.1:48545'
+dotnet test BTCPayServer.Plugins.USDC.Tests -c Release -m:1 -p:StaticWebAssetsEnabled=false --filter FullyQualifiedName~LocalForkTests --logger trx
+```
+
+This test resets that local node, forks current Ethereum and Sepolia state from public read-only RPC endpoints, and uses Anvil impersonation to mint test balances and execute transfers against the canonical USDC contracts **on the local forks only**. It requires internet access and available upstream state. It verifies receipts, recipient balances, six-decimal payment detection, finalized-head coverage, and stable replay IDs. All transaction/state-changing calls are restricted to an explicit `http://127.0.0.1` Anvil endpoint. No wallet keys or public-network transactions are needed. CI runs this test too; it is explicitly skipped when the Anvil environment variable is absent. Stop and remove the named test node when finished.
+
 ## Validation and limitations
 
 - Automated tests use an in-memory JSON-RPC transport, exercising real Nethereum filter construction and ERC-20 decoding without credentials or transactions. Tests cover partial/exact/overpayment amounts, one atomic unit, large amounts, culture invariance, batched logs, duplicate replay, wrong contract/recipient/block, removed logs, network/decimal mismatch, finality, checkout links, confirmation thresholds, and expiration tracking.
-- PostgreSQL integration tests exercise concurrent allocation across service instances and stores. Running-host tests install the published plugin, configure a store through the authenticated API, reject invalid receiving addresses, create concurrent invoices across stores, render HTTP checkout, persist partial and multiple payments, reject duplicate and pre-invoice credit, and recover from RPC failure and listener restart. A full host restart also verifies persisted invoices and detection of late payments after expiration. The same lifecycle runs with USDt installed. All 31 tests passed locally with no skips. The controlled HTTP RPC fixture emits synthetic blocks and logs; it does not execute Ethereum transactions. A funded Sepolia payment remains unverified.
+- PostgreSQL integration tests exercise concurrent allocation across service instances and stores. Running-host tests install the published plugin, configure a store through the authenticated API, reject invalid receiving addresses, create concurrent invoices across stores, render HTTP checkout, persist partial and multiple payments, reject duplicate and pre-invoice credit, and recover from RPC failure and listener restart. A full host restart also verifies persisted invoices and detection of late payments after expiration. Coexistence tests settle both USDt and USDC invoices at the same receiving address without cross-crediting the tokens. These host tests use synthetic HTTP RPC logs; the separate local-fork test executes actual EVM transfers against canonical Ethereum and Sepolia USDC bytecode/state. A funded public-Sepolia payment has not been sent.
 - Address claims are part of the BTCPay database backup. Never delete the `USDC.Address.*` or `USDC.InvoiceAddress.*` settings to replenish a pool, and do not restore an older database while continuing to use previously exposed addresses. This initial private implementation has no migration from older prototype invoices that did not create durable claims; start with fresh addresses.
 - No automatic sweeping, refunds, payouts, wallet generation, historical backfill from before initial activation, or recovery after catastrophic finalized-chain rollback. The node is trusted to report canonical finalized history. RPC outages or stalled finality delay detection.
 - The inherited 49-day expired-invoice bootstrap lookback does not cover arbitrarily old monitoring windows. Keep monitoring windows within that bound.
+- An RPC outage that lasts beyond an invoice's monitoring window can leave a payment undetected and require manual reconciliation. Addresses remain permanently claimed even when monitoring ends.
 - NuGet reports existing advisories in the pinned BTCPay dependency graph (AngleSharp, SSH.NET, and Microsoft.Build.Tasks.Git). Host dependency upgrades belong in the BTCPay repository and were not silently substituted here.
 
 ## Provenance

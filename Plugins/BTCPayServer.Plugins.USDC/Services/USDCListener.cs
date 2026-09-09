@@ -139,6 +139,11 @@ public abstract class USDCListener<TConfigurationItem, TPaymentData>(
                     if (invoices.Length == 0)
                     {
                         var lastBlockNumber = await EVMUSDCRPCProvider.GetFinalizedHeight(web3Client);
+                        // The head request may overlap invoice creation. Recheck after observing the
+                        // head so a newly exposed destination is scanned before advancing past it.
+                        if ((await trackedInvoiceProvider.GetTrackedInvoices(paymentMethodId, stoppingToken))
+                            .Any(invoice => invoice.GetPaymentPrompt(paymentMethodId)?.Activated is true))
+                            continue;
                         if (lastBlockNumber.Value > listenerState.LastBlockHeight)
                         {
                             logger.Log(EmptyQueueBlockAdvanceLogLevel,

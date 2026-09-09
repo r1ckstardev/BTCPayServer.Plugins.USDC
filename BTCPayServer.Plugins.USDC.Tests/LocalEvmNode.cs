@@ -35,11 +35,11 @@ internal sealed class LocalEvmNode : IAsyncDisposable
     {
         lock (_gate) _timestamps[height] = timestamp.ToUnixTimeSeconds();
     }
-    public void Transfer(int height, string destination, int atomicAmount, int logIndex = 0)
+    public void Transfer(int height, string destination, int atomicAmount, int logIndex = 0, string? contract = null)
     {
         lock (_gate) _logs.Add(new JObject
         {
-            ["address"] = USDCConfigurationProvider.SepoliaContract,
+            ["address"] = contract ?? USDCConfigurationProvider.SepoliaContract,
             ["blockNumber"] = "0x" + height.ToString("x"), ["blockHash"] = Hash(height),
             ["transactionHash"] = Hash(height + 100000), ["transactionIndex"] = "0x0",
             ["logIndex"] = "0x" + logIndex.ToString("x"), ["removed"] = false,
@@ -90,6 +90,7 @@ internal sealed class LocalEvmNode : IAsyncDisposable
             case "eth_getLogs":
                 var filter = request["params"]![0]!;
                 lock (_gate) return new JArray(_logs.Where(log => log["blockNumber"]!.Value<string>() == filter["fromBlock"]!.Value<string>() &&
+                    filter["address"]!.ToString().Contains(log["address"]!.Value<string>()!, StringComparison.OrdinalIgnoreCase) &&
                     filter["topics"]![2]!.ToString().Contains(log["topics"]![2]!.Value<string>()!, StringComparison.OrdinalIgnoreCase)).Select(log => log.DeepClone()));
             default: throw new InvalidOperationException($"Unexpected RPC: {request["method"]}");
         }
