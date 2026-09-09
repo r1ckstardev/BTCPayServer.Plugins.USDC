@@ -16,6 +16,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Xunit;
+using AngleSharp.Html.Parser;
 
 namespace BTCPayServer.Plugins.USDC.Tests;
 
@@ -37,6 +38,7 @@ public class HostSmokeTests
     private async Task RunLifecycle(bool coInstall)
     {
         await using var node = new LocalEvmNode();
+        await using var replacementNode = new LocalEvmNode();
         // A fresh database prevents previous runs' global scan cursors/settings influencing this chain.
         var database = "usdc_host_" + Guid.NewGuid().ToString("N");
         var connection = new NpgsqlConnectionStringBuilder(Environment.GetEnvironmentVariable("USDC_TEST_POSTGRES"));
@@ -106,12 +108,13 @@ public class HostSmokeTests
             var destination = "0x" + Guid.NewGuid().ToString("N") + "11111111";
             var secondDestination = "0x" + Guid.NewGuid().ToString("N") + "22222222";
             var lateDestination = "0x" + Guid.NewGuid().ToString("N") + "33333333";
+            var switchedDestination = "0x" + Guid.NewGuid().ToString("N") + "44444444";
             foreach (var invalid in new[] { "not-an-address", "0x0000000000000000000000000000000000000000", Configuration.USDCConfigurationProvider.SepoliaContract })
                 await Assert.ThrowsAsync<GreenfieldValidationException>(() => api.UpdateStorePaymentMethod(store.Id, "USDC-SEPOLIA",
                     new UpdatePaymentMethodRequest { Enabled = true, Config = new JObject { ["addresses"] = new JArray(invalid) } }));
             await api.UpdateStorePaymentMethod(store.Id, "USDC-SEPOLIA", new UpdatePaymentMethodRequest
             {
-                Enabled = true, Config = new JObject { ["addresses"] = new JArray(destination, secondDestination, lateDestination) }
+                Enabled = true, Config = new JObject { ["addresses"] = new JArray(destination, secondDestination, lateDestination, switchedDestination) }
             });
             const string usdtContract = "0xf02d1af3c9ec13f4e9e986f2de75da96d75a57b0";
             BTCPayServer.Client.Models.InvoiceData? usdtInvoice = null;
@@ -246,6 +249,30 @@ public class HostSmokeTests
             }
             await Eventually(async () => (await api.GetInvoice(lateInvoice.Id)).Status == InvoiceStatus.Expired);
 
+            var switchedInvoice = await api.CreateInvoice(store.Id, new CreateInvoiceRequest
+            {
+                Currency = "USDC", Amount = 1m,
+                Checkout = new InvoiceDataBase.CheckoutOptions
+                {
+                    PaymentMethods = ["USDC-SEPOLIA"], LazyPaymentMethods = false,
+                    SpeedPolicy = SpeedPolicy.HighSpeed, Expiration = TimeSpan.FromHours(1)
+                }
+            });
+            Assert.Equal(switchedDestination, (await api.GetInvoicePaymentMethods(switchedInvoice.Id)).Single().Destination);
+            await SubmitForm(client, "/login", "#login-form", new()
+            {
+                ["Email"] = email, ["Password"] = password, ["Method"] = "Password"
+            });
+            replacementNode.FinalizedHeight = 107;
+            await SubmitForm(client, "/server/evmUSDClike/USDC-SEPOLIA", "form[enctype='multipart/form-data']",
+                new() { ["JsonRpcUri"] = replacementNode.Url });
+            var activeConfiguration = host.Services.GetRequiredService<Configuration.USDCPluginConfiguration>();
+            Assert.Equal(replacementNode.Url, activeConfiguration.EVMUSDCLikeConfigurationItems[pmi].JsonRpcUri.AbsoluteUri);
+            // The old endpoint stays healthy at height 107. Detection must switch without a restart/error.
+            replacementNode.Transfer(108, switchedDestination, 1000000);
+            replacementNode.FinalizedHeight = 112;
+            await Eventually(async () => (await api.GetInvoice(switchedInvoice.Id)).Status == InvoiceStatus.Settled);
+
             // Rebuild the entire host, including tracking caches, against its existing database.
             await host.StopAsync().WaitAsync(TimeSpan.FromSeconds(30));
             host.Dispose();
@@ -254,8 +281,8 @@ public class HostSmokeTests
             address = host.Services.GetRequiredService<IServer>().Features.Get<IServerAddressesFeature>()!.Addresses.Single();
             api = new BTCPayServerClient(new Uri(address), email, password);
             Assert.Equal(1m, (await api.GetInvoicePaymentMethods(invoice.Id)).Single().TotalPaid);
-            node.Transfer(108, lateDestination, 1000000);
-            node.FinalizedHeight = 112;
+            replacementNode.Transfer(113, lateDestination, 1000000);
+            replacementNode.FinalizedHeight = 117;
             await Eventually(async () => (await api.GetInvoice(lateInvoice.Id)).AdditionalStatus == InvoiceExceptionStatus.PaidLate);
             var late = (await api.GetInvoicePaymentMethods(lateInvoice.Id)).Single();
             Assert.Equal(1m, late.TotalPaid);
@@ -280,6 +307,22 @@ public class HostSmokeTests
             await Task.Delay(200);
         }
         Assert.Fail("The expected live-host state was not reached within 90 seconds.");
+    }
+
+    private static async Task SubmitForm(HttpClient client, string path, string selector, Dictionary<string, string> values)
+    {
+        using var page = await client.GetAsync(path);
+        page.EnsureSuccessStatusCode();
+        using var document = await new HtmlParser().ParseDocumentAsync(await page.Content.ReadAsStringAsync());
+        var form = document.QuerySelector(selector);
+        Assert.NotNull(form);
+        var fields = form.QuerySelectorAll("input[name]").GroupBy(input => input.GetAttribute("name")!)
+            .ToDictionary(group => group.Key, group => group.First().GetAttribute("value") ?? "");
+        Assert.Contains("__RequestVerificationToken", fields.Keys);
+        foreach (var value in values) fields[value.Key] = value.Value;
+        using var result = await client.PostAsync(path, new FormUrlEncodedContent(fields));
+        result.EnsureSuccessStatusCode();
+        Assert.NotEqual("/login", result.RequestMessage!.RequestUri!.AbsolutePath);
     }
 }
 

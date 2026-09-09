@@ -108,6 +108,8 @@ public abstract class USDCListener<TConfigurationItem, TPaymentData>(
                     continue;
                 }
 
+                // Do not initialize or advance a durable cursor from a different chain.
+                await rpcProvider.ValidateNetworkAsync(paymentMethodId);
                 var listenerState = await LoadTrackingState(configurationItem);
                 var web3Client = rpcProvider.GetWeb3Client(paymentMethodId);
                 var latestBlockNumber = await EVMUSDCRPCProvider.GetFinalizedHeight(web3Client);
@@ -133,6 +135,9 @@ public abstract class USDCListener<TConfigurationItem, TPaymentData>(
                 var latestSafeBlockHeight = Math.Max(-1, (long)latestBlockNumber.Value - safeHeadLagBlocks);
                 while (!stoppingToken.IsCancellationRequested)
                 {
+                    // Server configuration can replace the RPC client without restarting BTCPay.
+                    if (!ReferenceEquals(web3Client.Client, rpcProvider.GetWeb3Client(paymentMethodId).Client))
+                        break;
                     var invoices = (await trackedInvoiceProvider.GetTrackedInvoices(paymentMethodId, stoppingToken))
                         .Where(invoice => invoice.GetPaymentPrompt(paymentMethodId)?.Activated is true)
                         .ToArray();

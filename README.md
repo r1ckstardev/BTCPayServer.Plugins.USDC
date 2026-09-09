@@ -37,6 +37,8 @@ The packer creates `artifacts/packed/BTCPayServer.Plugins.USDC/0.1.0.0/BTCPaySer
 
 Endpoint overrides can also be provided through BTCPay configuration as `USDC_ETHEREUM_JSONRPC_URI` or `USDC_SEPOLIA_JSONRPC_URI`. Saved server settings take precedence. Keep authenticated endpoint URLs in private server configuration, never source control, screenshots, or issue reports.
 
+Saving a new RPC endpoint through the server settings form switches the running listener without a BTCPay restart. The listener validates the network and token decimals before initializing its scan cursor, and resumes from the existing cursor when changing providers for the same chain. The saved endpoint is restored after a host restart.
+
 ## Payment lifecycle
 
 The handler atomically claims an unused address in PostgreSQL before exposing it, sets USDC as the currency with six decimals, and produces an EIP-681 ERC-20 transfer URI. A database transaction and unique address key prevent concurrent invoices or stores from receiving the same address. Retrying configuration for the same invoice returns its original address. Claims survive restarts, invoice expiration, settlement, and deletion; an ERC-20 transfer has no invoice identifier, so automatic address recycling would misattribute late payments. Even an unsuccessful invoice creation can consume an address. Standard, address-only, and custom-template links follow the reference's checkout conventions.
