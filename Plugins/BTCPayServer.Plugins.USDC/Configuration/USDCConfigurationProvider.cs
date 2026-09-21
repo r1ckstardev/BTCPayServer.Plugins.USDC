@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Threading.Tasks;
 using BTCPayServer.Abstractions.Contracts;
 using BTCPayServer.Configuration;
@@ -20,12 +21,11 @@ public static class USDCConfigurationProvider
     public static Dictionary<PaymentMethodId, EVMUSDCLikeConfigurationItem> GetEVMUSDCLikeDefaultConfigurationItems(
         NBXplorerNetworkProvider networkProvider, IConfiguration configuration)
     {
-        var config = GetDefault(networkProvider.NetworkType);
-        config = config with
-        {
-            JsonRpcUri = configuration.GetOrDefault($"{config.GetSettingPrefix()}_JSONRPC_URI", config.JsonRpcUri)
-        };
-        return new() { [config.GetPaymentMethodId()] = config };
+        return new[] { GetDefault(networkProvider.NetworkType), GetPolygonDefault(networkProvider.NetworkType) }
+            .Select(config => config with
+            {
+                JsonRpcUri = configuration.GetOrDefault($"{config.GetSettingPrefix()}_JSONRPC_URI", config.JsonRpcUri)
+            }).ToDictionary(config => config.GetPaymentMethodId());
     }
 
     public static EVMUSDCLikeConfigurationItem GetEVMUSDCDefaultConfigurationItem(
@@ -53,6 +53,25 @@ public static class USDCConfigurationProvider
             BlockExplorerLink = mainnet ? "https://etherscan.io/tx/{0}" : "https://sepolia.etherscan.io/tx/{0}",
             CryptoImagePath = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Ccircle cx='32' cy='32' r='32' fill='%232775ca'/%3E%3Ctext x='32' y='38' text-anchor='middle' font-family='sans-serif' font-size='17' fill='white'%3EUSDC%3C/text%3E%3C/svg%3E",
             DefaultRateRules = ["USDC_USD = 1", "USDC_BTC = USD_BTC", "USDC_X = USDC_BTC * BTC_X"]
+        };
+    }
+
+    public const string PolygonContract = "0x3c499c542cef5e3811e1192ce70d8cc03d5c3359";
+    public const string AmoyContract = "0x41e94eb019c0762f9bfcf9fb1e58725bfb0e7582";
+
+    internal static EVMUSDCLikeConfigurationItem GetPolygonDefault(ChainName network)
+    {
+        var ethereum = GetDefault(network); // Validates the host network.
+        var mainnet = network == ChainName.Mainnet;
+        return new(mainnet ? Constants.PolygonChainName : Constants.AmoyChainName)
+        {
+            Currency = ethereum.Currency, CurrencyDisplayName = ethereum.CurrencyDisplayName,
+            DisplayName = mainnet ? "USDC on Polygon" : "USDC on Amoy (testnet)",
+            Divisibility = 6, SmartContractAddress = mainnet ? PolygonContract : AmoyContract,
+            ChainId = mainnet ? 137 : 80002, BlockTimeSeconds = 2,
+            JsonRpcUri = new Uri(mainnet ? "https://polygon.drpc.org" : "https://polygon-amoy.drpc.org"),
+            BlockExplorerLink = mainnet ? "https://polygonscan.com/tx/{0}" : "https://amoy.polygonscan.com/tx/{0}",
+            CryptoImagePath = ethereum.CryptoImagePath, DefaultRateRules = ethereum.DefaultRateRules
         };
     }
 

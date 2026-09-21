@@ -1,0 +1,185 @@
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
+using BTCPayServer.Data;
+using BTCPayServer.Client.Models;
+using BTCPayServer.Events;
+using BTCPayServer.Payments;
+using BTCPayServer.Plugins.USDC.Services.Payments;
+using BTCPayServer.Services.Invoices;
+using BTCPayServer.Services.Notifications;
+using Microsoft.EntityFrameworkCore;
+using Newtonsoft.Json;
+
+namespace BTCPayServer.Plugins.USDC.Services;
+
+// The observation is written BEFORE the payment. Replaying either side of a crash
+// uses this immutable invoice association and verifies the payment before a cursor
+// may advance. Settings keys are independent of USDt and versioned explicitly.
+public sealed class USDCChainRecovery(
+    ApplicationDbContextFactory factory,
+    InvoiceRepository invoices,
+    PaymentMethodHandlerDictionary handlers,
+    PaymentService payments,
+    EventAggregator events,
+    NotificationSender notifications,
+    USDCAddressAllocator reservations)
+{
+    public sealed class Observation
+    {
+        public int Version { get; set; } = 2;
+        public required string Id { get; init; }
+        public required string InvoiceId { get; init; }
+        public required string From { get; init; }
+        public required string To { get; init; }
+        public decimal Amount { get; init; }
+        public DateTimeOffset Timestamp { get; init; }
+        public long Height { get; set; }
+        public required string BlockHash { get; set; }
+        public bool Canonical { get; set; } = true;
+        public bool Finalized { get; set; }
+        public string? ReconciliationNotice { get; set; }
+        public bool NoticeSent { get; set; }
+    }
+
+    private static string Prefix(PaymentMethodId pmi) => $"USDC.Transfer.v2.{pmi}.";
+
+    public async Task<InvoiceEntity?> ResolveCurrentInvoice(PaymentMethodId pmi, string address, DateTimeOffset timestamp)
+    {
+        var claim = await reservations.CurrentClaim(pmi, address);
+        if (claim is null) return null;
+        var invoice = await invoices.GetInvoice(claim.InvoiceId);
+        return invoice is not null && USDCTrackedInvoiceProvider.ShouldTrack(invoice, pmi, DateTimeOffset.UtcNow) &&
+               timestamp.ToUnixTimeSeconds() >= invoice.InvoiceTime.ToUnixTimeSeconds() ? invoice : null;
+    }
+
+    public async Task WithChainLock(PaymentMethodId pmi, Func<Task> action, CancellationToken cancellationToken)
+    {
+        // Hold a transaction advisory lock for the whole read/reconcile/checkpoint
+        // cycle. Independent host processes cannot index the same chain concurrently.
+        await using var context = factory.CreateContext();
+        await using var transaction = await context.Database.BeginTransactionAsync(cancellationToken);
+        var key = $"USDC.Indexer.v2.{pmi}";
+        await context.Database.ExecuteSqlInterpolatedAsync($"SELECT pg_advisory_xact_lock(hashtextextended({key}, 0))", cancellationToken);
+        await action();
+        await transaction.CommitAsync(cancellationToken);
+    }
+
+    public async Task<Observation?> Find(PaymentMethodId pmi, string id)
+    {
+        await using var context = factory.CreateContext();
+        var key = Prefix(pmi) + id;
+        var row = await context.Settings.AsNoTracking().SingleOrDefaultAsync(s => s.Id == key);
+        return row is null ? null : JsonConvert.DeserializeObject<Observation>(row.Value);
+    }
+
+    public async Task<Observation[]> Outstanding(PaymentMethodId pmi)
+    {
+        await using var context = factory.CreateContext();
+        var prefix = Prefix(pmi);
+        // Retain finalized records for identity/association, but don't poll them.
+        var rows = await context.Settings.FromSqlInterpolated($"""
+            SELECT * FROM "Settings" WHERE starts_with("Id", {prefix})
+              AND COALESCE(("Value"->>'Finalized')::boolean, false) = false
+            """).AsNoTracking().ToArrayAsync();
+        return rows.Select(s => JsonConvert.DeserializeObject<Observation>(s.Value)!).ToArray();
+    }
+
+    public async Task Save(PaymentMethodId pmi, Observation observation)
+    {
+        await using var context = factory.CreateContext();
+        var key = Prefix(pmi) + observation.Id;
+        var value = JsonConvert.SerializeObject(observation);
+        await context.Database.ExecuteSqlInterpolatedAsync($"""
+            INSERT INTO "Settings" ("Id", "Value") VALUES ({key}, CAST({value} AS jsonb))
+            ON CONFLICT ("Id") DO UPDATE SET "Value" = EXCLUDED."Value"
+            """);
+    }
+
+    public async Task Reconcile(PaymentMethodId pmi, Observation observation, long indexedHeight)
+    {
+        var invoice = await invoices.GetInvoice(observation.InvoiceId)
+            ?? throw new InvalidOperationException($"USDC observation {observation.Id} refers to missing invoice {observation.InvoiceId}.");
+        var handler = handlers[pmi];
+        var payment = invoice.GetPayments(false).SingleOrDefault(p => p.PaymentMethodId == pmi && p.Id == observation.Id);
+        var details = new EVMUSDCPaymentData
+        {
+            TransactionId = observation.Id, From = observation.From, To = observation.To,
+            BlockHeight = observation.Height, BlockHash = observation.BlockHash,
+            ReconciliationNotice = observation.ReconciliationNotice
+        };
+        details.UpdateConfirmations(indexedHeight);
+        if (!observation.Canonical) details.ConfirmationCount = 0;
+        var status = !observation.Canonical ? PaymentStatus.Unaccounted :
+            details.PaymentConfirmed(invoice.SpeedPolicy) ? PaymentStatus.Settled : PaymentStatus.Processing;
+
+        if (payment is not null && (payment.Value != observation.Amount ||
+            !Same(((USDCPaymentData)handler.ParsePaymentDetails(payment.Details)).To, observation.To) ||
+            !Same(((USDCPaymentData)handler.ParsePaymentDetails(payment.Details)).From, observation.From)))
+            throw new USDCFinalityConflictException($"Conflicting persisted payment {observation.Id}.");
+
+        // Persist the notice before correcting a settled invoice: a crash cannot
+        // lose the merchant-facing reconciliation requirement.
+        if (invoice.Status == InvoiceStatus.Settled && status != PaymentStatus.Settled && observation.ReconciliationNotice is null)
+        {
+            observation.ReconciliationNotice = $"USDC reconciliation required: settled invoice {invoice.Id} has a payment removed or deconfirmed by a chain reorganization. Review delivery and payment accounting. Payment: {observation.Id}";
+            await Save(pmi, observation);
+            details.ReconciliationNotice = observation.ReconciliationNotice;
+        }
+
+        if (payment is null)
+        {
+            var data = new PaymentData
+            {
+                Id = observation.Id, InvoiceDataId = invoice.Id, Amount = observation.Amount,
+                Currency = "USDC", Created = observation.Timestamp, Status = status
+            }.Set(invoice, handler, details);
+            // AddPayment can return null for ANY database update failure. Never
+            // interpret null as proof of a duplicate or successful durable write.
+            payment = await payments.AddPayment(data, [observation.Id]);
+            if (payment is not null)
+                events.Publish(new InvoiceEvent(invoice, InvoiceEvent.ReceivedPayment) { Payment = payment });
+        }
+        else
+        {
+            var old = (USDCPaymentData)handler.ParsePaymentDetails(payment.Details);
+            if (payment.Status != status || old.BlockHeight != details.BlockHeight ||
+                old.BlockHash != details.BlockHash || old.ConfirmationCount != details.ConfirmationCount ||
+                old.ReconciliationNotice != details.ReconciliationNotice)
+            {
+                payment.Status = status;
+                payment.SetDetails(handler, details);
+                await payments.UpdatePayments([payment]);
+            }
+        }
+
+        var persisted = await invoices.GetInvoice(invoice.Id);
+        var verified = persisted?.GetPayments(false).SingleOrDefault(p => p.PaymentMethodId == pmi && p.Id == observation.Id);
+        if (verified is null || verified.Value != observation.Amount || verified.Status != status)
+            throw new InvalidOperationException($"USDC payment {observation.Id} was not durably persisted; checkpoint unchanged.");
+        var verifiedDetails = (USDCPaymentData)handler.ParsePaymentDetails(verified.Details);
+        if (verifiedDetails.BlockHeight != observation.Height || verifiedDetails.BlockHash != observation.BlockHash ||
+            verifiedDetails.ConfirmationCount != details.ConfirmationCount || !Same(verifiedDetails.To, observation.To) ||
+            !Same(verifiedDetails.From, observation.From))
+            throw new InvalidOperationException($"USDC payment {observation.Id} has unverified details; checkpoint unchanged.");
+
+        // At-least-once event delivery is intentional after a process crash.
+        events.Publish(new InvoiceNeedUpdateEvent(invoice.Id));
+        if (observation.ReconciliationNotice is not null && !observation.NoticeSent)
+        {
+            await invoices.AddInvoiceEvent(invoice.Id, observation.ReconciliationNotice, InvoiceEventData.EventSeverity.Warning);
+            await notifications.SendNotification(new StoreScope(invoice.StoreId), new USDCReconciliationNotification
+            {
+                InvoiceId = invoice.Id, StoreId = invoice.StoreId, Message = observation.ReconciliationNotice
+            });
+            observation.NoticeSent = true;
+            await Save(pmi, observation);
+        }
+    }
+
+    internal static bool Same(string? left, string? right) => string.Equals(left, right, StringComparison.OrdinalIgnoreCase);
+}
+
+internal sealed class USDCFinalityConflictException(string message) : Exception(message);

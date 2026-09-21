@@ -5,6 +5,7 @@ namespace BTCPayServer.Plugins.USDC.Services;
 
 public class USDCRpcSummary
 {
+    public string? Diagnostic { get; set; }
     public bool Synced { get; set; }
     public BigInteger LatestBlockOnNode { get; set; }
     public DateTime UpdatedAt { get; set; }

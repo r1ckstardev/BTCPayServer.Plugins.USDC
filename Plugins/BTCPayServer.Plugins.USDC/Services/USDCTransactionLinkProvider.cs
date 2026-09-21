@@ -11,6 +11,8 @@ internal class USDCTransactionLinkProvider(string blockExplorerLink)
         if (string.IsNullOrEmpty(BlockExplorerLink))
             return null;
 
-        return string.Format(CultureInfo.InvariantCulture, BlockExplorerLink, paymentId.Split('-')[0]);
+        var hash = paymentId.Split('-')[0];
+        if (!hash.StartsWith("0x", System.StringComparison.OrdinalIgnoreCase)) hash = "0x" + hash;
+        return string.Format(CultureInfo.InvariantCulture, BlockExplorerLink, hash);
     }
 }

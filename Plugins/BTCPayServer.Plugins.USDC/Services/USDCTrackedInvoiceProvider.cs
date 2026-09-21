@@ -13,15 +13,14 @@ namespace BTCPayServer.Plugins.USDC.Services;
 
 public sealed class USDCTrackedInvoiceProvider
 {
-    internal static readonly TimeSpan BootstrapLookback = TimeSpan.FromDays(49);
     internal static readonly TimeSpan RefreshInterval = TimeSpan.FromSeconds(30);
 
     private readonly IUSDCInvoiceSource _invoiceSource;
     private readonly TimeProvider _timeProvider;
     private readonly ConcurrentDictionary<PaymentMethodId, TrackingState> _states = new();
 
-    public USDCTrackedInvoiceProvider(InvoiceRepository invoiceRepository)
-        : this(new InvoiceRepositoryUSDCInvoiceSource(invoiceRepository), TimeProvider.System)
+    public USDCTrackedInvoiceProvider(InvoiceRepository invoiceRepository, USDCAddressAllocator reservations)
+        : this(new InvoiceRepositoryUSDCInvoiceSource(invoiceRepository, reservations), TimeProvider.System)
     {
     }
 
@@ -44,7 +43,7 @@ public sealed class USDCTrackedInvoiceProvider
             if (!state.Bootstrapped)
             {
                 var expiredInvoices = await _invoiceSource.GetExpiredInvoicesSince(
-                    now - BootstrapLookback,
+                    DateTimeOffset.UnixEpoch,
                     cancellationToken);
                 AddMatchingInvoices(state.Invoices, paymentMethodId, expiredInvoices);
                 state.Bootstrapped = true;
@@ -141,26 +140,28 @@ internal interface IUSDCInvoiceSource
         CancellationToken cancellationToken);
 }
 
-internal sealed class InvoiceRepositoryUSDCInvoiceSource(InvoiceRepository invoiceRepository) : IUSDCInvoiceSource
+internal sealed class InvoiceRepositoryUSDCInvoiceSource(InvoiceRepository invoiceRepository, USDCAddressAllocator reservations) : IUSDCInvoiceSource
 {
-    public Task<InvoiceEntity[]> GetMonitoredInvoices(
+    public async Task<InvoiceEntity[]> GetMonitoredInvoices(
         PaymentMethodId paymentMethodId,
         CancellationToken cancellationToken)
     {
-        return invoiceRepository.GetMonitoredInvoices(paymentMethodId, true, cancellationToken);
+        var claims = await reservations.CurrentClaims(paymentMethodId);
+        if (claims.Length == 0) return [];
+        return await invoiceRepository.GetInvoices(new InvoiceQuery
+        {
+            InvoiceId = claims.Select(c => c.InvoiceId).Distinct().ToArray(),
+            IncludeArchived = true
+        }, cancellationToken);
     }
 
     public Task<InvoiceEntity[]> GetExpiredInvoicesSince(
         DateTimeOffset startDate,
         CancellationToken cancellationToken)
     {
-        return invoiceRepository.GetInvoices(new InvoiceQuery
-        {
-            Status = [InvoiceStatus.Expired.ToString()],
-            StartDate = startDate,
-            IncludeArchived = false,
-            OrderByDesc = false
-        }, cancellationToken);
+        // Current durable claims already include expired monitoring deadlines,
+        // even after long outages. No time-limited historical cache bootstrap.
+        return Task.FromResult(Array.Empty<InvoiceEntity>());
     }
 
     public Task<InvoiceEntity[]> GetInvoices(

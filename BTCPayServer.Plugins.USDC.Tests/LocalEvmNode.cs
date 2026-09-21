@@ -17,7 +17,24 @@ internal sealed class LocalEvmNode : IAsyncDisposable
     private int _failedRequests;
     private volatile bool _stopping;
     public int FailedRequests => Volatile.Read(ref _failedRequests);
-    public int FinalizedHeight { get; set; } = 100;
+    public int FinalizedHeight { get; set; } = 100; // Existing fixtures use this as latest head too.
+    public int? FinalityHeightOverride { get; set; }
+    public int ChainId { get; set; } = 11155111;
+    private readonly Dictionary<int, int> _forks = [];
+    private string HashAt(int height) { lock (_gate) return Hash(height + (_forks.Where(f => height >= f.Key).OrderByDescending(f => f.Key).FirstOrDefault().Value * 1000000)); }
+    public void ForkFrom(int height, int branch) { lock (_gate) _forks[height] = branch; }
+    public void Reinclude(int oldHeight, int newHeight, int indexOffset = 0)
+    {
+        lock (_gate)
+        foreach (var old in _logs.Where(l => l["blockNumber"]!.Value<string>() == "0x" + oldHeight.ToString("x")).ToArray())
+        {
+            var log = (JObject)old.DeepClone();
+            log["blockNumber"] = "0x" + newHeight.ToString("x");
+            log["blockHash"] = HashAt(newHeight);
+            log["logIndex"] = "0x" + (Convert.ToInt32(log["logIndex"]!.Value<string>()![2..],16) + indexOffset).ToString("x");
+            _logs.Add(log);
+        }
+    }
     public bool FailRequests { get; set; }
     public int? PauseBlockHeight { get; set; }
     public TaskCompletionSource BlockRequestPaused { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -45,8 +62,8 @@ internal sealed class LocalEvmNode : IAsyncDisposable
     {
         lock (_gate) _logs.Add(new JObject
         {
-            ["address"] = contract ?? USDCConfigurationProvider.SepoliaContract,
-            ["blockNumber"] = "0x" + height.ToString("x"), ["blockHash"] = Hash(height),
+            ["address"] = contract ?? (ChainId == 80002 ? USDCConfigurationProvider.AmoyContract : USDCConfigurationProvider.SepoliaContract),
+            ["blockNumber"] = "0x" + height.ToString("x"), ["blockHash"] = HashAt(height),
             ["transactionHash"] = Hash(height + 100000), ["transactionIndex"] = "0x0",
             ["logIndex"] = "0x" + logIndex.ToString("x"), ["removed"] = false,
             ["data"] = "0x" + atomicAmount.ToString("x").PadLeft(64, '0'),
@@ -89,7 +106,7 @@ internal sealed class LocalEvmNode : IAsyncDisposable
     {
         switch (request["method"]!.Value<string>())
         {
-            case "eth_chainId": return "0xaa36a7";
+            case "eth_chainId": return "0x" + ChainId.ToString("x");
             case "eth_syncing": return false;
             case "eth_blockNumber": return "0x" + FinalizedHeight.ToString("x");
             case "eth_call":
@@ -97,16 +114,27 @@ internal sealed class LocalEvmNode : IAsyncDisposable
                     ? "0x" + "6".PadLeft(64, '0') : "0x" + new string('0', 64);
             case "eth_getBlockByNumber":
                 var tag = request["params"]![0]!.Value<string>()!;
-                var height = tag is "finalized" or "latest" ? FinalizedHeight : Convert.ToInt32(tag[2..], 16);
+                var height = tag == "finalized" ? FinalityHeightOverride ?? FinalizedHeight : tag == "latest" ? FinalizedHeight : Convert.ToInt32(tag[2..], 16);
                 long timestamp;
                 lock (_gate)
                     if (!_timestamps.TryGetValue(height, out timestamp))
                         _timestamps[height] = timestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
-                return new JObject { ["number"] = "0x" + height.ToString("x"), ["hash"] = Hash(height),
+                return new JObject { ["number"] = "0x" + height.ToString("x"), ["hash"] = HashAt(height), ["parentHash"] = HashAt(height - 1),
                     ["timestamp"] = "0x" + timestamp.ToString("x"), ["transactions"] = new JArray() };
+            case "eth_getTransactionReceipt":
+                lock (_gate)
+                {
+                    var receiptLogs = _logs.Where(l => l["transactionHash"]!.Value<string>() == request["params"]![0]!.Value<string>() &&
+                        l["blockHash"]!.Value<string>() == HashAt(Convert.ToInt32(l["blockNumber"]!.Value<string>()![2..],16)))
+                        .GroupBy(l => l["logIndex"]!.Value<string>()).Select(g => g.First()).OrderBy(l => Convert.ToInt32(l["logIndex"]!.Value<string>()![2..],16)).ToArray();
+                    if (receiptLogs.Length == 0) return JValue.CreateNull();
+                    return new JObject { ["transactionHash"] = receiptLogs[0]["transactionHash"], ["blockHash"] = receiptLogs[0]["blockHash"],
+                        ["blockNumber"] = receiptLogs[0]["blockNumber"], ["status"] = "0x1", ["logs"] = new JArray(receiptLogs.Select(l => l.DeepClone())) };
+                }
             case "eth_getLogs":
                 var filter = request["params"]![0]!;
                 lock (_gate) return new JArray(_logs.Where(log => log["blockNumber"]!.Value<string>() == filter["fromBlock"]!.Value<string>() &&
+                    log["blockHash"]!.Value<string>() == HashAt(Convert.ToInt32(log["blockNumber"]!.Value<string>()![2..],16)) &&
                     filter["address"]!.ToString().Contains(log["address"]!.Value<string>()!, StringComparison.OrdinalIgnoreCase) &&
                     filter["topics"]![2]!.ToString().Contains(log["topics"]![2]!.Value<string>()!, StringComparison.OrdinalIgnoreCase)).Select(log => log.DeepClone()));
             default: throw new InvalidOperationException($"Unexpected RPC: {request["method"]}");

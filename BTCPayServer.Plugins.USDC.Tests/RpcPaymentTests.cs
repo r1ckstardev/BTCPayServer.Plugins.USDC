@@ -27,6 +27,7 @@ public class RpcPaymentTests
     [InlineData(400000, 0.4)]
     [InlineData(1000000, 1)]
     [InlineData(1200000, 1.2)]
+    [InlineData(1, 0.000001)]
     public async Task RpcTransferDetectionPreservesPartialExactAndOverpaymentAmounts(int atomic, double expected)
     {
         var (rpc, listener, transport) = Create();
@@ -34,7 +35,7 @@ public class RpcPaymentTests
         var match = Assert.Single(await listener.Scan());
         Assert.Equal((decimal)expected, USDCAmounts.FromBaseUnits(match.Amount, 6));
         Assert.Equal(Destination, match.Destination);
-        Assert.EndsWith("-USDC-11155111", match.Id);
+        Assert.EndsWith("-USDC-11155111-" + USDCConfigurationProvider.SepoliaContract, match.Id);
         Assert.Equal(1, transport.LogRequests);
         Assert.Equal("0x64", transport.LastFilter!["fromBlock"]!.Value<string>());
         Assert.Equal("0x64", transport.LastFilter["toBlock"]!.Value<string>());
@@ -52,6 +53,24 @@ public class RpcPaymentTests
         Assert.Equal(new BigInteger(1_000_000), matches.Aggregate(BigInteger.Zero, (sum, m) => sum + m.Amount));
         Assert.Equal(2, matches.Select(m => m.Id).Distinct().Count());
         Assert.Equal(matches, await listener.Scan());
+    }
+
+    [Fact]
+    public async Task ReceiptPositionKeepsIdentityWhenBlockLogIndexChanges()
+    {
+        var (_, listener, transport) = Create();
+        transport.Logs = new JArray(Log(7, 1000000));
+        var original = Assert.Single(await listener.Scan());
+        transport.Logs = new JArray(Log(81, 1000000));
+        Assert.Equal(original.Id, Assert.Single(await listener.Scan()).Id);
+    }
+
+    [Fact]
+    public async Task ConflictingDuplicateCannotBeSilentlyDiscarded()
+    {
+        var (_, listener, transport) = Create();
+        transport.Logs = new JArray(Log(7, 1000000), Log(7, 2000000));
+        await Assert.ThrowsAsync<InvalidOperationException>(() => listener.Scan());
     }
 
     [Theory]
@@ -77,7 +96,8 @@ public class RpcPaymentTests
             case "zero": log["data"] = "0x" + new string('0', 64); break;
         }
         transport.Logs = new JArray(log);
-        Assert.Empty(await listener.Scan());
+        if (reason is "recipient" or "zero") Assert.Empty(await listener.Scan());
+        else await Assert.ThrowsAsync<InvalidOperationException>(() => listener.Scan());
     }
 
     [Theory]
@@ -158,6 +178,11 @@ public class RpcPaymentTests
                     LastFilter = body["params"]![0]!.DeepClone();
                     LogRequests++;
                     result = Logs;
+                    break;
+                case "eth_getTransactionReceipt":
+                    result = new JObject { ["transactionHash"] = Hash, ["blockHash"] = BlockHash,
+                        ["blockNumber"] = "0x64", ["status"] = "0x1",
+                        ["logs"] = new JArray(Logs.GroupBy(l => l["logIndex"]?.ToString()).Select(g => g.First().DeepClone())) };
                     break;
                 case "eth_getBlockByNumber":
                     LastBlockTag = body["params"]![0]!.Value<string>();

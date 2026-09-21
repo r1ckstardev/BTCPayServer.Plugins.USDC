@@ -10,6 +10,7 @@ public class EditEVMUSDCPaymentMethodViewModel
     public string AddressPlaceholder { get; init; } = "0x742d35Cc6634C0532925a3b844Bc454e4438f44e";
     public string? Address { get; init; }
     public bool Enabled { get; init; }
+    public int EmptyAddressCount { get; init; }
     public USDCPaymentLinkFormat PaymentLinkFormat { get; init; } = USDCPaymentLinkFormat.Standard;
     public string? PaymentLinkTemplate { get; init; }
     public string TemplatePreviewDestination { get; init; } = "0x742d35Cc6634C0532925a3b844Bc454e4438f44e";

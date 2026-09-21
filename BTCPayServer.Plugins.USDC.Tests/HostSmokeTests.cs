@@ -20,7 +20,7 @@ using AngleSharp.Html.Parser;
 
 namespace BTCPayServer.Plugins.USDC.Tests;
 
-public class HostSmokeTests
+public partial class HostSmokeTests
 {
     internal static string RepositoryRoot()
     {
@@ -35,10 +35,24 @@ public class HostSmokeTests
     [CoInstallFact]
     public Task PublishedPluginWorksAlongsideUSDt() => RunLifecycle(true);
 
-    private async Task RunLifecycle(bool coInstall)
+    [DatabaseFact]
+    public Task ReorganizationRetainsInvoiceAssociationAfterAddressReuseAndHaltsOnFinalityConflict() => RunLifecycle(false, recoveryCase: true);
+
+    [DatabaseFact]
+    public Task BrowserConfigurationValidationPermissionsAndCheckout() => RunLifecycle(false, browserCase: true);
+
+    [DatabaseFact]
+    public Task AmoyHostLifecycleUsesPolygonConfirmationDelayAndIndependentState() => RunLifecycle(false, amoyCase: true);
+
+    private async Task RunLifecycle(bool coInstall, bool recoveryCase = false, bool browserCase = false, bool amoyCase = false)
     {
         await using var node = new LocalEvmNode();
         await using var replacementNode = new LocalEvmNode();
+        if (recoveryCase) node.FinalityHeightOverride = 100;
+        var usdcMethodId = amoyCase ? "USDC-AMOY" : "USDC-SEPOLIA";
+        var chainId = amoyCase ? 80002 : 11155111;
+        node.ChainId = replacementNode.ChainId = chainId;
+        var lagAdjustment = amoyCase ? 1 : 0;
         // A fresh database prevents previous runs' global scan cursors/settings influencing this chain.
         var database = "usdc_host_" + Guid.NewGuid().ToString("N");
         var connection = new NpgsqlConnectionStringBuilder(Environment.GetEnvironmentVariable("USDC_TEST_POSTGRES"));
@@ -70,7 +84,7 @@ public class HostSmokeTests
             ["datadir"] = data, ["plugindir"] = plugins,
             ["postgres"] = connection.ConnectionString,
             ["TEST_RUNNER_ENABLED"] = "true", ["disable-registration"] = "false",
-            ["USDC_SEPOLIA_JSONRPC_URI"] = node.Url,
+            [amoyCase ? "USDC_AMOY_JSONRPC_URI" : "USDC_SEPOLIA_JSONRPC_URI"] = node.Url,
             ["USDT_SEPOLIA_JSONRPC_URI"] = node.Url
         };
         IHost BuildHost() => Host.CreateDefaultBuilder()
@@ -85,7 +99,7 @@ public class HostSmokeTests
         try
         {
             var handlers = host.Services.GetRequiredService<PaymentMethodHandlerDictionary>();
-            Assert.True(handlers.TryGetValue(new PaymentMethodId("USDC-SEPOLIA"), out _));
+            Assert.True(handlers.TryGetValue(new PaymentMethodId(usdcMethodId), out _));
             Assert.Equal(coInstall, handlers.TryGetValue(new PaymentMethodId("USDT-SEPOLIA"), out _));
             var address = host.Services.GetRequiredService<IServer>().Features.Get<IServerAddressesFeature>()!.Addresses.Single();
             using var client = new HttpClient { BaseAddress = new Uri(address) };
@@ -102,6 +116,7 @@ public class HostSmokeTests
                 if (!await roles.RoleExistsAsync(Roles.ServerAdmin))
                     Assert.True((await roles.CreateAsync(new IdentityRole(Roles.ServerAdmin))).Succeeded);
                 var user = new ApplicationUser { UserName = email, Email = email, EmailConfirmed = true };
+                user.SetBlob(new UserBlob { AllowGreenfieldBasicAuth = true });
                 Assert.True((await users.CreateAsync(user, password)).Succeeded);
                 Assert.True((await users.AddToRoleAsync(user, Roles.ServerAdmin)).Succeeded);
             }
@@ -111,10 +126,10 @@ public class HostSmokeTests
             var secondDestination = "0x" + Guid.NewGuid().ToString("N") + "22222222";
             var lateDestination = "0x" + Guid.NewGuid().ToString("N") + "33333333";
             var switchedDestination = "0x" + Guid.NewGuid().ToString("N") + "44444444";
-            foreach (var invalid in new[] { "not-an-address", "0x0000000000000000000000000000000000000000", Configuration.USDCConfigurationProvider.SepoliaContract })
-                await Assert.ThrowsAsync<GreenfieldValidationException>(() => api.UpdateStorePaymentMethod(store.Id, "USDC-SEPOLIA",
+            foreach (var invalid in new[] { "not-an-address", "0x0000000000000000000000000000000000000000", (amoyCase ? Configuration.USDCConfigurationProvider.AmoyContract : Configuration.USDCConfigurationProvider.SepoliaContract) })
+                await Assert.ThrowsAsync<GreenfieldValidationException>(() => api.UpdateStorePaymentMethod(store.Id, usdcMethodId,
                     new UpdatePaymentMethodRequest { Enabled = true, Config = new JObject { ["addresses"] = new JArray(invalid) } }));
-            await api.UpdateStorePaymentMethod(store.Id, "USDC-SEPOLIA", new UpdatePaymentMethodRequest
+            await api.UpdateStorePaymentMethod(store.Id, usdcMethodId, new UpdatePaymentMethodRequest
             {
                 Enabled = true, Config = new JObject { ["addresses"] = new JArray(destination, secondDestination, lateDestination, switchedDestination) }
             });
@@ -148,8 +163,20 @@ public class HostSmokeTests
                 Assert.Contains("USDt", await usdtCheckout.Content.ReadAsStringAsync(), StringComparison.OrdinalIgnoreCase);
             }
             var rpc = host.Services.GetRequiredService<EVMUSDCRPCProvider>();
-            var pmi = new PaymentMethodId("USDC-SEPOLIA");
+            var pmi = new PaymentMethodId(usdcMethodId);
             await Eventually(async () => { await rpc.UpdateSummary(pmi); return rpc.IsAvailable(pmi); });
+            if (browserCase)
+            {
+                await RunBrowserParity(host, address, email, password, api, store.Id, node);
+                await host.StopAsync().WaitAsync(TimeSpan.FromSeconds(30));
+                host.Dispose();
+                host = BuildHost();
+                await host.StartWithTasksAsync().WaitAsync(TimeSpan.FromSeconds(90));
+                Assert.True(host.Services.GetRequiredService<PaymentMethodHandlerDictionary>().TryGetValue(new PaymentMethodId(usdcMethodId), out _));
+                Assert.Equal(System.Security.Cryptography.SHA256.HashData(File.ReadAllBytes(typeof(USDCPlugin).Assembly.Location)),
+                    System.Security.Cryptography.SHA256.HashData(File.ReadAllBytes(Path.Combine(plugin, "BTCPayServer.Plugins.USDC.dll"))));
+                return;
+            }
             if (!coInstall)
             {
                 var sharedPool = Enumerable.Range(0, 6).Select(_ => "0x" + Guid.NewGuid().ToString("N") + "abcdef12").ToArray();
@@ -159,7 +186,7 @@ public class HostSmokeTests
                     await api.CreateStore(new CreateStoreRequest { Name = "Concurrent B" })
                 };
                 foreach (var concurrentStore in stores)
-                    await api.UpdateStorePaymentMethod(concurrentStore.Id, "USDC-SEPOLIA", new UpdatePaymentMethodRequest
+                    await api.UpdateStorePaymentMethod(concurrentStore.Id, usdcMethodId, new UpdatePaymentMethodRequest
                     {
                         Enabled = true, Config = new JObject { ["addresses"] = new JArray(sharedPool) }
                     });
@@ -167,7 +194,7 @@ public class HostSmokeTests
                     new CreateInvoiceRequest
                     {
                         Currency = "USDC", Amount = 1m,
-                        Checkout = new InvoiceDataBase.CheckoutOptions { PaymentMethods = ["USDC-SEPOLIA"], LazyPaymentMethods = false }
+                        Checkout = new InvoiceDataBase.CheckoutOptions { PaymentMethods = [usdcMethodId], LazyPaymentMethods = false }
                     })));
                 var destinations = await Task.WhenAll(concurrent.Select(async item =>
                     Assert.Single(await api.GetInvoicePaymentMethods(item.Id)).Destination));
@@ -179,13 +206,13 @@ public class HostSmokeTests
                 Currency = "USDC", Amount = 1m,
                 Checkout = new InvoiceDataBase.CheckoutOptions
                 {
-                    PaymentMethods = ["USDC-SEPOLIA"], LazyPaymentMethods = false,
+                    PaymentMethods = [usdcMethodId], LazyPaymentMethods = false,
                     SpeedPolicy = SpeedPolicy.HighSpeed, Expiration = TimeSpan.FromHours(1), Monitoring = TimeSpan.FromHours(1)
                 }
             });
             var method = Assert.Single(await api.GetInvoicePaymentMethods(invoice.Id));
             Assert.Equal(destination, method.Destination);
-            Assert.Contains("@11155111/transfer", method.PaymentLink);
+            Assert.Contains($"@{chainId}/transfer", method.PaymentLink);
             var checkout = await client.GetAsync(invoice.CheckoutLink);
             checkout.EnsureSuccessStatusCode();
             Assert.Contains("USDC", await checkout.Content.ReadAsStringAsync());
@@ -194,7 +221,7 @@ public class HostSmokeTests
                 Currency = "USDC", Amount = 1m,
                 Checkout = new InvoiceDataBase.CheckoutOptions
                 {
-                    PaymentMethods = ["USDC-SEPOLIA"], LazyPaymentMethods = false,
+                    PaymentMethods = [usdcMethodId], LazyPaymentMethods = false,
                     SpeedPolicy = SpeedPolicy.HighSpeed, Expiration = TimeSpan.FromHours(1), Monitoring = TimeSpan.FromHours(1)
                 }
             });
@@ -204,7 +231,7 @@ public class HostSmokeTests
                 Currency = "USDC", Amount = 1m,
                 Checkout = new InvoiceDataBase.CheckoutOptions
                 {
-                    PaymentMethods = ["USDC-SEPOLIA"], LazyPaymentMethods = false,
+                    PaymentMethods = [usdcMethodId], LazyPaymentMethods = false,
                     SpeedPolicy = SpeedPolicy.HighSpeed, Expiration = TimeSpan.FromMinutes(1), Monitoring = TimeSpan.FromHours(1)
                 }
             });
@@ -212,7 +239,7 @@ public class HostSmokeTests
             node.SetTimestamp(101, DateTimeOffset.UtcNow.AddDays(-1));
             node.Transfer(101, destination, 5000000); // An old deposit cannot pay this invoice.
             node.Transfer(102, destination, 400000);
-            node.FinalizedHeight = 103;
+            node.FinalizedHeight = 103 + lagAdjustment;
             await Eventually(async () => (await api.GetInvoicePaymentMethods(invoice.Id)).Single().TotalPaid == 0.4m);
             Assert.Equal(InvoiceStatus.New, (await api.GetInvoice(invoice.Id)).Status);
             // Stop completely, then resume from the persisted cursor with an unavailable RPC.
@@ -227,10 +254,10 @@ public class HostSmokeTests
             node.Transfer(103, secondDestination, 500000, 2);
             node.Transfer(103, secondDestination, 500000, 2); // Duplicate RPC log must not double-credit.
             if (coInstall) node.Transfer(103, destination, 1000000, 3, usdtContract);
-            node.FinalizedHeight = 104;
+            node.FinalizedHeight = 104 + lagAdjustment;
             node.FailRequests = false;
             await Eventually(async () => (await api.GetInvoice(invoice.Id)).Status == InvoiceStatus.Processing);
-            node.FinalizedHeight = 107;
+            node.FinalizedHeight = 107 + lagAdjustment;
             await Eventually(async () => (await api.GetInvoice(invoice.Id)).Status == InvoiceStatus.Settled);
             method = Assert.Single(await api.GetInvoicePaymentMethods(invoice.Id));
             Assert.Equal(1m, method.TotalPaid);
@@ -249,14 +276,26 @@ public class HostSmokeTests
                 Assert.Single(usdtPayment.Payments);
                 Assert.Equal(1m, (await api.GetInvoicePaymentMethods(invoice.Id)).Single().TotalPaid);
             }
+            if (recoveryCase)
+            {
+                await RunRecoveryParity(host, api, store.Id, node, invoice.Id, destination, secondInvoice.Id);
+                return;
+            }
             await Eventually(async () => (await api.GetInvoice(lateInvoice.Id)).Status == InvoiceStatus.Expired);
 
+            // Settled addresses are reusable; use a separate destination for the
+            // provider-switch case so reuse and RPC recovery are tested separately.
+            Assert.DoesNotContain(destination, await host.Services.GetRequiredService<USDCAddressAllocator>().GetUsedAddresses(pmi, [destination]));
+            await api.UpdateStorePaymentMethod(store.Id, usdcMethodId, new UpdatePaymentMethodRequest
+            {
+                Enabled = true, Config = new JObject { ["addresses"] = new JArray(switchedDestination) }
+            });
             var switchedInvoice = await api.CreateInvoice(store.Id, new CreateInvoiceRequest
             {
                 Currency = "USDC", Amount = 1m,
                 Checkout = new InvoiceDataBase.CheckoutOptions
                 {
-                    PaymentMethods = ["USDC-SEPOLIA"], LazyPaymentMethods = false,
+                    PaymentMethods = [usdcMethodId], LazyPaymentMethods = false,
                     SpeedPolicy = SpeedPolicy.HighSpeed, Expiration = TimeSpan.FromHours(1)
                 }
             });
@@ -265,7 +304,7 @@ public class HostSmokeTests
             {
                 ["Email"] = email, ["Password"] = password, ["Method"] = "Password"
             });
-            replacementNode.FinalizedHeight = 107;
+            replacementNode.FinalizedHeight = 107 + lagAdjustment;
             // The old provider has the next block; the replacement is still behind. Switch while
             // that block request is in flight to prove the cursor cannot skip its payment.
             if (!coInstall)
@@ -273,22 +312,21 @@ public class HostSmokeTests
                 replacementNode.ObserveEmptyLogsHeight = 108;
                 node.PauseBlockHeight = 108;
                 node.Transfer(108, switchedDestination, 1000000);
-                node.FinalizedHeight = 109;
+                node.FinalizedHeight = 109 + lagAdjustment;
                 await node.BlockRequestPaused.Task.WaitAsync(TimeSpan.FromSeconds(30));
             }
             try
             {
-                await SubmitForm(client, "/server/evmUSDClike/USDC-SEPOLIA", "form[enctype='multipart/form-data']",
+                await SubmitForm(client, $"/server/evmUSDClike/{usdcMethodId}", "form[enctype='multipart/form-data']",
                     new() { ["JsonRpcUri"] = replacementNode.Url });
             }
             finally { node.ResumeBlockRequest.TrySetResult(); }
-            if (!coInstall)
-                await replacementNode.EmptyLogResponseCreated.Task.WaitAsync(TimeSpan.FromSeconds(30));
+
             var activeConfiguration = host.Services.GetRequiredService<Configuration.USDCPluginConfiguration>();
             Assert.Equal(replacementNode.Url, activeConfiguration.EVMUSDCLikeConfigurationItems[pmi].JsonRpcUri.AbsoluteUri);
             // The old endpoint stays healthy. Detection must switch without a restart/error.
             replacementNode.Transfer(108, switchedDestination, 1000000);
-            replacementNode.FinalizedHeight = 112;
+            replacementNode.FinalizedHeight = 112 + lagAdjustment;
             await Eventually(async () => (await api.GetInvoice(switchedInvoice.Id)).Status == InvoiceStatus.Settled);
 
             // Rebuild the entire host, including tracking caches, against its existing database.
@@ -300,7 +338,7 @@ public class HostSmokeTests
             api = new BTCPayServerClient(new Uri(address), email, password);
             Assert.Equal(1m, (await api.GetInvoicePaymentMethods(invoice.Id)).Single().TotalPaid);
             replacementNode.Transfer(113, lateDestination, 1000000);
-            replacementNode.FinalizedHeight = 117;
+            replacementNode.FinalizedHeight = 117 + lagAdjustment;
             await Eventually(async () => (await api.GetInvoice(lateInvoice.Id)).AdditionalStatus == InvoiceExceptionStatus.PaidLate);
             var late = (await api.GetInvoicePaymentMethods(lateInvoice.Id)).Single();
             Assert.Equal(1m, late.TotalPaid);

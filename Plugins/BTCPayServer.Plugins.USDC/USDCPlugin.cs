@@ -18,7 +18,7 @@ public class USDCPlugin : BaseBTCPayServerPlugin
 {
     public const string PluginNavKey = "USDCPlugin";
     public override IBTCPayServerPlugin.PluginDependency[] Dependencies { get; } =
-    [new() { Identifier = nameof(BTCPayServer), Condition = ">=2.3.7" }];
+    [new() { Identifier = nameof(BTCPayServer), Condition = ">=2.4.4" }];
 
     public override void Execute(IServiceCollection services)
     {
@@ -34,9 +34,12 @@ public class USDCPlugin : BaseBTCPayServerPlugin
     internal static void RegisterServices(IServiceCollection services, USDCPluginConfiguration configuration)
     {
         services.AddSingleton(configuration);
+        services.AddSingleton<ISwaggerProvider, Controllers.SwaggerProvider>();
         services.AddSingleton<USDCChainActivationService>();
         services.AddSingleton<USDCTrackedInvoiceProvider>();
         services.AddSingleton<USDCAddressAllocator>();
+        services.AddSingleton<USDCChainRecovery>();
+        services.AddSingleton<INotificationHandler, USDCReconciliationNotification.Handler>();
         services.AddHostedService<USDCPluginConfigurationBootstrapper>();
         services.AddSingleton<EVMUSDCRPCProvider>();
         services.AddHostedService<EVMUSDCLikeSummaryUpdaterHostedService>();
@@ -58,5 +61,6 @@ public class USDCPlugin : BaseBTCPayServerPlugin
         }
         services.AddUIExtension("store-wallets-nav", "USDC/StoreNav");
         services.AddUIExtension("server-nav", "USDC/ServerNav");
+        services.AddUIExtension("store-invoices-payments", "USDC/PaymentDetails");
     }
 }

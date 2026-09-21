@@ -7,7 +7,7 @@ permissions:
 jobs:
   test:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     services:
       postgres:
         image: postgres:16-alpine
@@ -33,11 +33,15 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: btcpayserver-tether/BTCPayServer.Plugins.USDt
-          ref: cacb4e8c3d2672ae966853bc833af93a98e4c0b1
+          ref: f1b3da1bc1ff2131cde946b938a2669e31f8fcc7
           path: artifacts/reference-usdt
           submodules: recursive
       - run: dotnet publish Plugins/BTCPayServer.Plugins.USDC -c Release -m:1 -p:StaticWebAssetsEnabled=false -o artifacts/usdc
       - run: dotnet publish artifacts/reference-usdt/BTCPayServer.Plugins.USDt -c Release -m:1 -p:StaticWebAssetsEnabled=false -o artifacts/usdt
+      - run: dotnet build BTCPayServer.Plugins.USDC.Tests -c Release -m:1 -p:StaticWebAssetsEnabled=false
+      - name: Install browser test runtime
+        run: pwsh BTCPayServer.Plugins.USDC.Tests/bin/Release/net10.0/playwright.ps1 install --with-deps chromium
+      - run: dotnet run --project submodules/btcpayserver/BTCPayServer.PluginPacker -c Release -- artifacts/usdc BTCPayServer.Plugins.USDC artifacts/packed
       - name: Start isolated Anvil for canonical USDC fork transactions
         run: |
           docker run --detach --name usdc-test-anvil -p 127.0.0.1:48545:8545 --entrypoint anvil ghcr.io/foundry-rs/foundry@sha256:0c00cb0bda1ab1b91c9a6bf60f4c76c09c1a8870824b6d4718afbabacf6f9a17 --host 0.0.0.0 --silent
@@ -46,10 +50,32 @@ jobs:
             sleep 1
           done
           exit 1
-      - run: dotnet test BTCPayServer.Plugins.USDC.Tests -c Release -m:1 -p:StaticWebAssetsEnabled=false --logger trx
-      - run: dotnet run --project submodules/btcpayserver/BTCPayServer.PluginPacker -c Release -- artifacts/usdc BTCPayServer.Plugins.USDC artifacts/packed
+      - run: dotnet test BTCPayServer.Plugins.USDC.Tests -c Release -m:1 -p:StaticWebAssetsEnabled=false --no-build --logger trx
+      - name: Require all integration tests to execute
+        run: |
+          python3 - <<'PY'
+          import glob, xml.etree.ElementTree as ET
+          files = glob.glob('BTCPayServer.Plugins.USDC.Tests/TestResults/*.trx')
+          assert files, 'No test results'
+          for file in files:
+              root = ET.parse(file).getroot()
+              counters = root.find('.//{*}Counters').attrib
+              assert int(counters['total']) == int(counters['passed']), counters
+          PY
+      - name: Record package provenance
+        run: |
+          git rev-parse HEAD > artifacts/tested-commit.txt
+          git submodule status > artifacts/host-commit.txt
+          find artifacts/packed -name '*.btcpay' -exec sha256sum {} \; > artifacts/package-sha256.txt
+          dotnet --info > artifacts/dotnet-info.txt
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: test-results
-          path: BTCPayServer.Plugins.USDC.Tests/TestResults/*.trx
+          name: usdc-release-candidate-${{ github.sha }}
+          path: |
+            BTCPayServer.Plugins.USDC.Tests/TestResults/*.trx
+            artifacts/packed/**/*.btcpay
+            artifacts/screenshots/*.png
+            artifacts/*-commit.txt
+            artifacts/package-sha256.txt
+            artifacts/dotnet-info.txt

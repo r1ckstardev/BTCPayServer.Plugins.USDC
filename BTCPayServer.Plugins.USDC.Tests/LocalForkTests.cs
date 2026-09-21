@@ -27,7 +27,7 @@ public class LocalForkTests(ITestOutputHelper output)
         """;
 
     [LocalForkFact]
-    public async Task CanonicalEthereumAndSepoliaContractsExecuteTransfersRecognizedByThePlugin()
+    public async Task CanonicalContractsOnAllFourNetworksExecuteTransfersRecognizedByThePlugin()
     {
         var endpoint = new Uri(Environment.GetEnvironmentVariable("USDC_TEST_ANVIL_URL")!);
         Assert.True(endpoint.Scheme == "http" && endpoint.Host == "127.0.0.1",
@@ -43,11 +43,17 @@ public class LocalForkTests(ITestOutputHelper output)
             return body["result"]!;
         }
         Assert.Contains("anvil", (await Rpc("web3_clientVersion")).Value<string>()!, StringComparison.OrdinalIgnoreCase);
-        foreach (var mainnet in new[] { true, false })
+        var networks = new[]
         {
-            var upstream = mainnet ? "https://ethereum.publicnode.com" : "https://ethereum-sepolia-rpc.publicnode.com";
-            await Rpc("anvil_reset", new { forking = new { jsonRpcUrl = upstream } });
-            var config = USDCConfigurationProvider.GetDefault(mainnet ? ChainName.Mainnet : ChainName.Testnet) with { JsonRpcUri = endpoint };
+            USDCConfigurationProvider.GetDefault(ChainName.Mainnet),
+            USDCConfigurationProvider.GetDefault(ChainName.Testnet) with { JsonRpcUri = new Uri("https://ethereum-sepolia-rpc.publicnode.com") },
+            USDCConfigurationProvider.GetPolygonDefault(ChainName.Mainnet),
+            USDCConfigurationProvider.GetPolygonDefault(ChainName.Testnet)
+        };
+        foreach (var network in networks)
+        {
+            await Rpc("anvil_reset", new { forking = new { jsonRpcUrl = network.JsonRpcUri.AbsoluteUri } });
+            var config = network with { JsonRpcUri = endpoint };
             await Rpc("anvil_setChainId", config.ChainId);
             var configuration = new USDCPluginConfiguration { EVMUSDCLikeConfigurationItems = new() { [config.GetPaymentMethodId()] = config } };
             var rpc = new EVMUSDCRPCProvider(configuration, new EventAggregator(new Logs()), null!, new ClientFactory());
@@ -86,7 +92,7 @@ public class LocalForkTests(ITestOutputHelper output)
             var payment = Assert.Single(await listener.Scan(pmi, block, destination));
             Assert.Equal(1.234567m, USDCAmounts.FromBaseUnits(payment.Amount, 6));
             Assert.Contains(receipt.TransactionHash[2..], payment.Id);
-            Assert.EndsWith($"-USDC-{config.ChainId}", payment.Id);
+            Assert.EndsWith($"-USDC-{config.ChainId}-{config.SmartContractAddress.ToLowerInvariant()}", payment.Id);
             Assert.Equal(payment, Assert.Single(await listener.Scan(pmi, block, destination)));
             output.WriteLine($"{pmi}: fork={forkHeight.Value}; local transfer={receipt.TransactionHash}; block={receipt.BlockNumber.Value}; amount=1.234567; finalized and replay verified.");
         }

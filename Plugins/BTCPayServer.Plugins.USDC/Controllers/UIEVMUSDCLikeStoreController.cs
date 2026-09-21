@@ -24,6 +24,7 @@ using Microsoft.AspNetCore.Mvc;
 namespace BTCPayServer.Plugins.USDC.Controllers;
 
 [Route("stores/{storeId}/evmUSDClike")]
+[AutoValidateAntiforgeryToken]
 [Authorize(AuthenticationSchemes = AuthenticationSchemes.Cookie)]
 [Authorize(Policy = Policies.CanModifyStoreSettings, AuthenticationSchemes = AuthenticationSchemes.Cookie)]
 public class UIEVMUSDCLikeStoreController(
@@ -87,10 +88,14 @@ public class UIEVMUSDCLikeStoreController(
                     .ToString(CultureInfo.InvariantCulture)
             });
 
-        var balances =
-            await evmUsdTRpcProvider.GetBalances(paymentMethodId, [.. matchedPaymentMethodConfig.Addresses]);
+        var savedAddresses = matchedPaymentMethodConfig.Addresses ?? [];
+        var addresses = savedAddresses
+            .Where(address => !string.IsNullOrWhiteSpace(address))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        var balances = await evmUsdTRpcProvider.GetBalances(paymentMethodId, addresses);
         var reservedAddresses =
-            await addressAllocator.GetUsedAddresses(paymentMethodId, matchedPaymentMethodConfig.Addresses);
+            await addressAllocator.GetUsedAddresses(paymentMethodId, addresses);
 
         return View(new EditEVMUSDCPaymentMethodViewModel
         {
@@ -106,16 +111,46 @@ public class UIEVMUSDCLikeStoreController(
             TemplatePreviewChainId = config.ChainId.ToString(CultureInfo.InvariantCulture),
             TemplatePreviewAmountUnits = USDCPaymentLinkFormats.ToBaseUnits(12.34m, config.Divisibility)
                 .ToString(CultureInfo.InvariantCulture),
-            Addresses = matchedPaymentMethodConfig.Addresses.Select(s =>
+            EmptyAddressCount = savedAddresses.Count(string.IsNullOrWhiteSpace),
+            Addresses = addresses.Select(s =>
                 new EditEVMUSDCPaymentMethodViewModel.EditEVMUSDCPaymentMethodAddressViewModel
                 {
-                    Available = reservedAddresses.Contains(s) == false,
+                    Available = !reservedAddresses.Contains(s, StringComparer.OrdinalIgnoreCase),
                     Balance = balances.Single(x => x.Item1 == s).Item2 == null
                         ? "N/A"
-                        : displayFormatter.Currency(balances.Single(x => x.Item1 == s).Item2!.Value, "USDC"),
+                        : balances.Single(x => x.Item1 == s).Item2!.Value.ToString("0.######", CultureInfo.InvariantCulture) + " USDC",
                     Value = s
                 }).ToArray()
         });
+    }
+
+    [HttpPost("{paymentMethodId}/addresses/delete-empty")]
+    public async Task<IActionResult> DeleteEmptyAddresses(string storeId, PaymentMethodId paymentMethodId)
+    {
+        if (!pluginConfiguration.EVMUSDCLikeConfigurationItems.ContainsKey(paymentMethodId))
+            return NotFound();
+
+        var store = StoreData;
+        var config = store.GetPaymentMethodConfig<EVMUSDCPaymentMethodConfig>(paymentMethodId, handlers);
+        if (config is null) return NotFound();
+
+        var addresses = config.Addresses ?? [];
+        var remaining = addresses.Where(address => !string.IsNullOrWhiteSpace(address)).ToArray();
+        if (remaining.Length != addresses.Length)
+        {
+            // Cleanup is explicit and must not change activation or payment settings.
+            config.Addresses = remaining;
+            store.SetPaymentMethodConfig(handlers[paymentMethodId], config);
+            await storeRepository.UpdateStore(store);
+            eventAggregator.Publish(new USDCSettingsChanged());
+            TempData.SetStatusMessageModel(new StatusMessageModel
+            {
+                Message = "Empty address entries were removed.",
+                Severity = StatusMessageModel.StatusSeverity.Success
+            });
+        }
+
+        return RedirectToAction(nameof(GetStoreEVMUSDCLikePaymentMethod), new { storeId, paymentMethodId });
     }
 
     [HttpPost("{paymentMethodId}/addresses/{address}/delete")]
@@ -132,7 +167,8 @@ public class UIEVMUSDCLikeStoreController(
         if (currentPaymentMethodConfig is null) return NotFound();
 
         currentPaymentMethodConfig.MarkActivated();
-        currentPaymentMethodConfig.Addresses = currentPaymentMethodConfig.Addresses.Except(new[] { address }).ToArray();
+        currentPaymentMethodConfig.Addresses = (currentPaymentMethodConfig.Addresses ?? [])
+            .Except(new[] { address }, StringComparer.OrdinalIgnoreCase).ToArray();
         StoreData.SetPaymentMethodConfig(handlers[paymentMethodId], currentPaymentMethodConfig);
         store.SetStoreBlob(blob);
         await storeRepository.UpdateStore(store);
@@ -149,8 +185,8 @@ public class UIEVMUSDCLikeStoreController(
 
     [HttpPost("{paymentMethodId}")]
     [DisableRequestSizeLimit]
-    public async Task<IActionResult> GetStoreEVMUSDCLikePaymentMethod(EditEVMUSDCPaymentMethodViewModel viewModel,
-        PaymentMethodId paymentMethodId)
+    public async Task<IActionResult> GetStoreEVMUSDCLikePaymentMethod(EditUSDCPaymentMethodInputModel viewModel,
+        PaymentMethodId paymentMethodId, string? command = null)
     {
         if (!pluginConfiguration.EVMUSDCLikeConfigurationItems.TryGetValue(paymentMethodId, out var configuration))
             return NotFound();
@@ -160,13 +196,23 @@ public class UIEVMUSDCLikeStoreController(
         var currentPaymentMethodConfig = StoreData.GetPaymentMethodConfig<EVMUSDCPaymentMethodConfig>(paymentMethodId, handlers);
         currentPaymentMethodConfig ??= new EVMUSDCPaymentMethodConfig();
 
-        if (string.IsNullOrEmpty(viewModel.Address) == false)
+        if (command == "add-addresses" || !string.IsNullOrEmpty(viewModel.Address))
         {
-            var addresses = viewModel.Address.Split(new char[] { ',', ';', ' ', '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries)
-            .Where(EVMAddressHelper.IsValid)
-                .Where(a => !string.Equals(a, configuration.SmartContractAddress, StringComparison.OrdinalIgnoreCase))
-                .Select(a => a.ToLowerInvariant())
-                .Where(s => currentPaymentMethodConfig.Addresses.Contains(s) == false).ToArray();
+            // Only the address field belongs to this form.
+            ModelState.Remove(nameof(viewModel.Enabled));
+            ModelState.Remove(nameof(viewModel.PaymentLinkFormat));
+            ModelState.Remove(nameof(viewModel.PaymentLinkTemplate));
+            var submitted = (viewModel.Address ?? string.Empty)
+                .Split(new char[] { ',', ';', ' ', '\t', '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
+            if (!USDCAddressPool.TryNormalize(submitted, configuration.SmartContractAddress, out var submittedAddresses, out var addressError))
+            {
+                ModelState.AddModelError(nameof(viewModel.Address), addressError!);
+                return await GetStoreEVMUSDCLikePaymentMethod(paymentMethodId);
+            }
+
+            var currentAddresses = currentPaymentMethodConfig.Addresses ?? [];
+            var addresses = submittedAddresses
+                .Except(currentAddresses, StringComparer.OrdinalIgnoreCase).ToArray();
 
             if(addresses.Any() == false)
             {
@@ -181,7 +227,7 @@ public class UIEVMUSDCLikeStoreController(
 
             currentPaymentMethodConfig.Addresses =
             [
-                .. currentPaymentMethodConfig.Addresses,
+                .. currentAddresses,
                 .. addresses
             ];
             currentPaymentMethodConfig.MarkActivated();
@@ -216,16 +262,21 @@ public class UIEVMUSDCLikeStoreController(
                         configuration.Divisibility,
                         configuration.SmartContractAddress.ToLowerInvariant(),
                         configuration.ChainId))
-                : "The selected payment link format is invalid.";
+                : null;
             if (validationError is not null)
             {
-                TempData.SetStatusMessageModel(new StatusMessageModel
-                {
-                    Message = validationError,
-                    Severity = StatusMessageModel.StatusSeverity.Error
-                });
-                return RedirectToAction(nameof(GetStoreEVMUSDCLikePaymentMethod),
-                    new { storeId = store.Id, paymentMethodId });
+                ModelState.AddModelError(
+                    viewModel.PaymentLinkFormat == USDCPaymentLinkFormat.Custom
+                        ? nameof(viewModel.PaymentLinkTemplate)
+                        : nameof(viewModel.PaymentLinkFormat), validationError);
+            }
+            if (!ModelState.IsValid)
+            {
+                // Checkbox helpers cannot render a malformed Boolean. Keep its
+                // validation error, but display the stored Enabled value.
+                if (ModelState.TryGetValue(nameof(viewModel.Enabled), out var enabledState) && enabledState.Errors.Count > 0)
+                    enabledState.RawValue = null;
+                return await GetStoreEVMUSDCLikePaymentMethod(paymentMethodId);
             }
 
             var messages = new List<string>();

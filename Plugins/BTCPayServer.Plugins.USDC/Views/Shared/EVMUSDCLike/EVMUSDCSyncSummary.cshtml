@@ -19,6 +19,10 @@
                 @summary.Key
             </h5>
             <ul>
+                @if (summary.Value.Diagnostic is not null)
+                {
+                    <li class="text-danger">Indexing halted: @summary.Value.Diagnostic</li>
+                }
                 <li>Node available: @summary.Value.RpcAvailable</li>
                 <li>Last updated: @summary.Value.UpdatedAt</li>
                 <li>Synced: @summary.Value.Synced (@summary.Value.LatestBlockScanned / @summary.Value.HighestBlockOnChain)</li>

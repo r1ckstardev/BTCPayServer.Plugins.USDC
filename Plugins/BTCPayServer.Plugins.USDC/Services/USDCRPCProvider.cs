@@ -123,6 +123,7 @@ public abstract class USDCRPCProvider<TConfigurationItem>(
             return;
 
         var summary = new USDCRpcSummary();
+        summary.Diagnostic = listenerState.HaltReason;
         try
         {
             var web3Client = GetWeb3Client(pmi);
@@ -137,13 +138,13 @@ public abstract class USDCRPCProvider<TConfigurationItem>(
             }
             else
             {
-                var latestBlock = await EVMUSDCRPCProvider.GetFinalizedHeight(web3Client);
+                var latestBlock = await web3Client.Eth.Blocks.GetBlockNumber.SendRequestAsync();
                 summary.LatestBlockOnNode = latestBlock;
                 summary.HighestBlockOnChain = latestBlock;
                 summary.Syncing = false;
             }
 
-            summary.Synced = summary.HighestBlockOnChain - listenerState.LastBlockHeight <
+            summary.Synced = listenerState.HaltReason is null && summary.HighestBlockOnChain - listenerState.LastBlockHeight <
                              (int)(TimeSpan.FromMinutes(10).TotalSeconds / configuration.BlockTimeSeconds);
 
             summary.UpdatedAt = DateTime.UtcNow;

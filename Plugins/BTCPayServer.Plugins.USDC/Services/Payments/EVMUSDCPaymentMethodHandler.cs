@@ -40,11 +40,13 @@ public class EVMUSDCPaymentMethodHandler(
         var config = ParsePaymentMethodConfig(context.PaymentMethodConfig);
         var details = CreatePaymentPromptDetails(config);
         var availableAddress = await addressAllocator.Allocate(context.PaymentMethodId,
-                                   context.Store.Id, context.InvoiceEntity.Id, config.Addresses) ??
+                                   context.Store.Id, context.InvoiceEntity.Id, config.Addresses,
+                                   context.InvoiceEntity.InvoiceTime, context.InvoiceEntity.MonitoringExpiration) ??
                                throw new PaymentMethodUnavailableException(
-                                   $"No unused {configurationItem.Chain} receiving addresses remain. Add new addresses to the store.");
+                                   $"No available {configurationItem.Chain} receiving addresses remain. Add addresses or wait for an existing reservation to end.");
         context.Prompt.Destination = availableAddress;
-        context.TrackedDestinations.Add(availableAddress);
+        // BTCPay's AddressInvoices registry has a permanent unique address key.
+        // Reusable USDC monitoring is recovered from our durable reservations.
         context.Prompt.PaymentMethodFee = 0;
         context.Prompt.Details = JObject.FromObject(details, Serializer);
     }
@@ -87,11 +89,11 @@ public class EVMUSDCPaymentMethodHandler(
     public Task ValidatePaymentMethodConfig(PaymentMethodConfigValidationContext validationContext)
     {
         var config = ParsePaymentMethodConfig(validationContext.Config);
-        if (config.Addresses is null || config.Addresses.Any(a => !EVMAddressHelper.IsValid(a) ||
-                string.Equals(a, configurationItem.SmartContractAddress, StringComparison.OrdinalIgnoreCase)))
-            validationContext.ModelState.AddModelError(nameof(config.Addresses), "Receiving addresses must be valid nonzero Ethereum addresses and cannot be the USDC contract.");
+        if (!USDCAddressPool.TryNormalize(config.Addresses, configurationItem.SmartContractAddress,
+                out var normalized, out var addressError))
+            validationContext.ModelState.AddModelError(nameof(config.Addresses), addressError!);
         else
-            config.Addresses = config.Addresses.Select(a => a.ToLowerInvariant()).Distinct().ToArray();
+            config.Addresses = normalized;
         var previousConfig = validationContext.PreviousConfig is null
             ? null
             : ParsePaymentMethodConfig(validationContext.PreviousConfig);

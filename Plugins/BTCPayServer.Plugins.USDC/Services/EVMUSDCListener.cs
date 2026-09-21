@@ -17,6 +17,7 @@ using Nethereum.Contracts.Standards.ERC20.ContractDefinition;
 using Nethereum.Hex.HexTypes;
 using Nethereum.JsonRpc.Client;
 using Nethereum.RPC.Eth.DTOs;
+using Newtonsoft.Json.Linq;
 
 namespace BTCPayServer.Plugins.USDC.Services;
 
@@ -29,7 +30,8 @@ public class EVMUSDCListener(
     USDCTrackedInvoiceProvider trackedInvoiceProvider,
     ILogger<EVMUSDCListener> logger,
     PaymentMethodHandlerDictionary handlers,
-    PaymentService paymentService)
+    PaymentService paymentService,
+    USDCChainRecovery recovery = null!)
     : USDCListener<EVMUSDCLikeConfigurationItem, EVMUSDCPaymentData>(
         settingsRepository,
         eventAggregator,
@@ -38,7 +40,8 @@ public class EVMUSDCListener(
         trackedInvoiceProvider,
         logger,
         handlers,
-        paymentService)
+        paymentService,
+        recovery)
 {
     internal const int DestinationFilterBatchSize = 20;
 
@@ -62,7 +65,7 @@ public class EVMUSDCListener(
 
     protected override long GetHeadLagBlocks(EVMUSDCLikeConfigurationItem configurationItem)
     {
-        return 1;
+        return configurationItem.ChainId is 137 or 80002 ? 2 : 1;
     }
 
     protected override IDisposable? BeginLoggingScope(PaymentMethodId paymentMethodId)
@@ -122,28 +125,53 @@ public class EVMUSDCListener(
             await Task.Delay(250, stoppingToken);
         } while (tries++ < 3);
 
-        return ToTransferMatchSnapshots(
-                changes.Where(change =>
-                        string.Equals(change.Log.Address, configuration.SmartContractAddress, StringComparison.OrdinalIgnoreCase) &&
-                        change.Log.BlockNumber?.Value == block.Number.Value &&
-                        string.Equals(change.Log.BlockHash, block.BlockHash, StringComparison.OrdinalIgnoreCase) &&
-                        change.Log.LogIndex is not null && change.Log.TransactionHash is not null)
-                    .Select(change => new TransferLogSnapshot(
-                    change.Event.To,
-                    change.Event.From,
-                    change.Event.Value,
-                    change.Log.TransactionHash,
-                    change.Log.LogIndex?.ToString() ?? string.Empty,
-                    change.Log.Removed)),
-                invoicesPerAddress.Keys)
-            .Select(match => new USDCTransferMatch(
-                match.DestinationKey,
-                match.From,
-                match.To,
-                match.TotalAmount,
-                    $"{match.TransactionId}-USDC-{configuration.ChainId}"))
-            .ToArray();
+        Dictionary<string, USDCTransferMatch> matches = new(StringComparer.OrdinalIgnoreCase);
+        foreach (var transaction in changes.GroupBy(c => c.Log.TransactionHash, StringComparer.OrdinalIgnoreCase))
+        {
+            var receipt = await web3Client.Eth.Transactions.GetTransactionReceipt.SendRequestAsync(transaction.Key);
+            if (receipt?.Status?.Value != 1 || receipt.BlockNumber?.Value != block.Number.Value ||
+                !USDCChainRecovery.Same(receipt.BlockHash, block.BlockHash) ||
+                !USDCChainRecovery.Same(receipt.TransactionHash, transaction.Key))
+                throw new InvalidOperationException("RPC receipt conflicts with the indexed block.");
+            var receiptLogs = receipt.Logs ?? [];
+            if (receiptLogs.Any(l => l.LogIndex is null) || receiptLogs.Select(l => l.LogIndex.Value).Distinct().Count() != receiptLogs.Length)
+                throw new InvalidOperationException("Receipt contains missing or duplicate log positions.");
+            if (receiptLogs.Any(l => l.Removed || l.BlockNumber?.Value != block.Number.Value ||
+                    !USDCChainRecovery.Same(l.BlockHash, block.BlockHash) || !USDCChainRecovery.Same(l.TransactionHash, transaction.Key)) ||
+                !receiptLogs.Select(l => l.LogIndex.Value).SequenceEqual(receiptLogs.Select(l => l.LogIndex.Value).Order()))
+                throw new InvalidOperationException("Receipt log ancestry or ordering is inconsistent.");
+            foreach (var change in transaction)
+            {
+                var log = change.Log;
+                if (log.Removed || log.BlockNumber?.Value != block.Number.Value ||
+                    !USDCChainRecovery.Same(log.BlockHash, block.BlockHash) ||
+                    !USDCChainRecovery.Same(log.Address, configuration.SmartContractAddress) || log.LogIndex is null)
+                    throw new InvalidOperationException("RPC returned a conflicting transfer log.");
+                var position = Array.FindIndex(receiptLogs, l => l.LogIndex.Value == log.LogIndex.Value);
+                if (position < 0 || !SameLog(receiptLogs[position], log))
+                    throw new InvalidOperationException("Transfer log is not present verbatim in its transaction receipt.");
+                if (change.Event.Value <= 0 || !invoicesPerAddress.ContainsKey(change.Event.To.ToLowerInvariant())) continue;
+                // Receipt-relative ordinal is stable if the transaction is
+                // re-included elsewhere, unlike block-global logIndex.
+                var id = $"{transaction.Key.ToLowerInvariant().Replace("0x", "")}-{position}-USDC-{configuration.ChainId}-{configuration.SmartContractAddress.ToLowerInvariant()}";
+                var match = new USDCTransferMatch(change.Event.To.ToLowerInvariant(), change.Event.From.ToLowerInvariant(),
+                    change.Event.To.ToLowerInvariant(), change.Event.Value, id);
+                if (matches.TryGetValue(id, out var previous) && previous != match)
+                    throw new USDCFinalityConflictException($"Conflicting duplicate transfer {id}.");
+                matches[id] = match;
+            }
+        }
+        return matches.Values.ToArray();
     }
+
+    internal static bool SameLog(FilterLog left, FilterLog right) =>
+        !left.Removed && left.BlockNumber?.Value == right.BlockNumber?.Value &&
+        left.TransactionIndex?.Value == right.TransactionIndex?.Value &&
+        USDCChainRecovery.Same(left.Address, right.Address) &&
+        USDCChainRecovery.Same(left.BlockHash, right.BlockHash) &&
+        USDCChainRecovery.Same(left.TransactionHash, right.TransactionHash) &&
+        USDCChainRecovery.Same(left.Data, right.Data) && left.Topics.Length == right.Topics.Length &&
+        left.Topics.Zip(right.Topics).All(pair => USDCChainRecovery.Same(pair.First?.ToString(), pair.Second?.ToString()));
 
     internal static IReadOnlyList<string[]> BatchDestinationAddresses(
         IEnumerable<string> destinationKeys,
@@ -168,7 +196,7 @@ public class EVMUSDCListener(
             .Select(address => address.ToLowerInvariant())
             .ToHashSet(StringComparer.Ordinal);
 
-        return changes
+        var matches = changes
             .Where(change => !change.Removed && change.Value > 0)
             .Select(change => new TransferMatchSnapshot(
                 change.To.ToLowerInvariant(),
@@ -177,8 +205,10 @@ public class EVMUSDCListener(
                 change.Value,
                 $"{change.TransactionHash.Replace("0x", "")}-{change.LogIndex}"))
             .Where(match => destinationKeySet.Contains(match.DestinationKey))
-            .DistinctBy(match => match.TransactionId)
             .ToArray();
+        foreach (var group in matches.GroupBy(m => m.TransactionId))
+            if (group.Distinct().Count() != 1) throw new InvalidOperationException("Conflicting duplicate transfer log.");
+        return matches.DistinctBy(match => match.TransactionId).ToArray();
     }
 
     internal static bool IsBlockRangeBeyondCurrentHeadError(Exception exception)

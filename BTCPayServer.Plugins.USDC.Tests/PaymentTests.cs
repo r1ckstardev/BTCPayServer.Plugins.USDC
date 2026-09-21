@@ -39,11 +39,15 @@ public class PaymentTests
     [InlineData("Mainnet", "USDC-ETHEREUM", 1, USDCConfigurationProvider.MainnetContract)]
     [InlineData("Testnet", "USDC-SEPOLIA", 11155111, USDCConfigurationProvider.SepoliaContract)]
     [InlineData("Regtest", "USDC-SEPOLIA", 11155111, USDCConfigurationProvider.SepoliaContract)]
-    public void OnlyNativeEthereumUsdcIsRegistered(string network, string pmi, int chainId, string contract)
+    [InlineData("Mainnet", "USDC-POLYGON", 137, USDCConfigurationProvider.PolygonContract)]
+    [InlineData("Testnet", "USDC-AMOY", 80002, USDCConfigurationProvider.AmoyContract)]
+    [InlineData("Regtest", "USDC-AMOY", 80002, USDCConfigurationProvider.AmoyContract)]
+    public void NativeUsdcNetworksFollowHostNetwork(string network, string pmi, int chainId, string contract)
     {
         var configs = USDCConfigurationProvider.GetEVMUSDCLikeDefaultConfigurationItems(
             new NBXplorerNetworkProvider(new ChainName(network)), new ConfigurationBuilder().Build());
-        var config = Assert.Single(configs).Value;
+        Assert.Equal(2, configs.Count);
+        var config = configs[new PaymentMethodId(pmi)];
         Assert.Equal(pmi, config.GetPaymentMethodId().ToString());
         Assert.Equal(chainId, config.ChainId);
         Assert.Equal(contract, config.SmartContractAddress);
@@ -75,7 +79,7 @@ public class PaymentTests
     [InlineData(SpeedPolicy.MediumSpeed, 6)]
     [InlineData(SpeedPolicy.LowMediumSpeed, 12)]
     [InlineData(SpeedPolicy.LowSpeed, 20)]
-    public void ConfirmationThresholdsUseSubsequentFinalizedBlocks(SpeedPolicy speed, int threshold)
+    public void ConfirmationThresholdsUseSubsequentIndexedBlocks(SpeedPolicy speed, int threshold)
     {
         var payment = new EVMUSDCPaymentData { From = "from", To = "to", TransactionId = "tx", BlockHeight = 100 };
         payment.UpdateConfirmations(99);
