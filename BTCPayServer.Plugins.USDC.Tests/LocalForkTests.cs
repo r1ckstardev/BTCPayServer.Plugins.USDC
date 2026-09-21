@@ -59,7 +59,8 @@ public class LocalForkTests(ITestOutputHelper output)
             USDCConfigurationProvider.GetDefault(ChainName.Mainnet),
             USDCConfigurationProvider.GetDefault(ChainName.Testnet) with { JsonRpcUri = new Uri("https://ethereum-sepolia-rpc.publicnode.com") },
             USDCConfigurationProvider.GetPolygonDefault(ChainName.Mainnet),
-            USDCConfigurationProvider.GetPolygonDefault(ChainName.Testnet)
+            // Forking needs recent historical storage as well as normal RPC reads.
+            USDCConfigurationProvider.GetPolygonDefault(ChainName.Testnet) with { JsonRpcUri = new Uri("https://polygon-amoy-bor-rpc.publicnode.com") }
         };
         foreach (var network in networks)
         {
