@@ -69,8 +69,8 @@ public partial class HostSmokeTests
         var listener = host.Services.GetServices<IHostedService>().OfType<EVMUSDCListener>().Single();
         await listener.StopAsync(CancellationToken.None);
         var configuration = host.Services.GetRequiredService<USDCPluginConfiguration>().EVMUSDCLikeConfigurationItems[pmi];
-        var settings = host.Services.GetRequiredService<ISettingsRepository>();
-        var state = await settings.GetSettingAsync<EVMBasedListenerState>(EVMUSDCRPCProvider.ListenerStateSettingKey(configuration));
+        var settings = host.Services.GetRequiredService<USDCChainStateStore>();
+        var state = await settings.Get(EVMUSDCRPCProvider.ListenerStateSettingKey(configuration));
         Assert.True(state!.LastBlockHeight < 114);
         Assert.Empty((await api.GetInvoicePaymentMethods(reused.Id)).Single().Payments);
         await using (var context = host.Services.GetRequiredService<ApplicationDbContextFactory>().CreateContext())
@@ -78,9 +78,40 @@ public partial class HostSmokeTests
         await listener.StartAsync(CancellationToken.None);
         await Eventually(async () => (await api.GetInvoicePaymentMethods(reused.Id)).Single().TotalPaid == 0.000001m);
 
+        // Successful payment followed by a failed cursor write: restart must
+        // replay without adding a second payment or changing invoice ownership.
+        await using (var context = host.Services.GetRequiredService<ApplicationDbContextFactory>().CreateContext())
+            await context.Database.ExecuteSqlRawAsync("""
+                CREATE FUNCTION usdc_test_checkpoint_failure() RETURNS trigger LANGUAGE plpgsql AS $$
+                BEGIN
+                  IF NEW."Id" = 'USDC_SEPOLIA_LISTENER_STATE' AND (NEW."Value"->>'LastBlockHeight')::numeric >= 120
+                  THEN RAISE EXCEPTION 'Injected checkpoint write failure'; END IF;
+                  RETURN NEW;
+                END $$;
+                CREATE TRIGGER usdc_test_checkpoint_failure BEFORE INSERT OR UPDATE ON "Settings" FOR EACH ROW EXECUTE FUNCTION usdc_test_checkpoint_failure();
+                """);
+        node.Transfer(120, destination, 999999);
+        node.FinalizedHeight = 124;
+        await Eventually(async () => (await api.GetInvoicePaymentMethods(reused.Id)).Single().TotalPaid == 1m);
+        await listener.StopAsync(CancellationToken.None);
+        state = await settings.Get(EVMUSDCRPCProvider.ListenerStateSettingKey(configuration));
+        Assert.True(state!.LastBlockHeight < 120);
+        var beforeRestart = (await api.GetInvoicePaymentMethods(reused.Id)).Single().Payments.Select(p => p.Id).Order().ToArray();
+        Assert.Equal(2, beforeRestart.Length);
+        await using (var context = host.Services.GetRequiredService<ApplicationDbContextFactory>().CreateContext())
+            await context.Database.ExecuteSqlRawAsync("DROP TRIGGER usdc_test_checkpoint_failure ON \"Settings\"; DROP FUNCTION usdc_test_checkpoint_failure();");
+        node.ThrottleRequests = true;
+        var failedBefore = node.FailedRequests;
+        await listener.StartAsync(CancellationToken.None);
+        await Eventually(() => Task.FromResult(node.FailedRequests > failedBefore));
+        Assert.Equal(state.LastBlockHeight, (await settings.Get(EVMUSDCRPCProvider.ListenerStateSettingKey(configuration)))!.LastBlockHeight);
+        node.ThrottleRequests = false;
+        await Eventually(async () => (await api.GetInvoice(reused.Id)).Status == InvoiceStatus.Settled);
+        Assert.Equal(beforeRestart, (await api.GetInvoicePaymentMethods(reused.Id)).Single().Payments.Select(p => p.Id).Order().ToArray());
+
         // A conflicting finalized anchor stops only this chain with a diagnostic.
         node.ForkFrom(100, 2);
-        await Eventually(async () => (await settings.GetSettingAsync<EVMBasedListenerState>(EVMUSDCRPCProvider.ListenerStateSettingKey(configuration)))?.HaltReason is not null);
+        await Eventually(async () => (await settings.Get(EVMUSDCRPCProvider.ListenerStateSettingKey(configuration)))?.HaltReason is not null);
         var rpc = host.Services.GetRequiredService<EVMUSDCRPCProvider>();
         await rpc.UpdateSummary(pmi);
         Assert.False(rpc.IsAvailable(pmi));
@@ -143,6 +174,21 @@ public partial class HostSmokeTests
         Assert.Equal(HttpStatusCode.NotFound, (await authorized.GetAsync(infoPath.Replace("USDC-SEPOLIA", "USDC-AMOY"))).StatusCode);
         Assert.Equal(HttpStatusCode.NotFound, (await authorized.GetAsync(infoPath.Replace("USDC-SEPOLIA", "USDC-UNKNOWN"))).StatusCode);
 
+        // Real Greenfield API keys must enforce the documented store-view scope.
+        using var scopedClient = new HttpClient { BaseAddress = new Uri(address) };
+        var viewKey = await api.CreateAPIKey(new CreateApiKeyRequest
+        {
+            Label = "USDC read test", Permissions = [Permission.Parse($"btcpay.store.canviewstoresettings:{storeId}")]
+        });
+        scopedClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("token", viewKey.ApiKey);
+        Assert.Equal(HttpStatusCode.OK, (await scopedClient.GetAsync(infoPath)).StatusCode);
+        var invoiceKey = await api.CreateAPIKey(new CreateApiKeyRequest
+        {
+            Label = "USDC denied test", Permissions = [Permission.Parse($"btcpay.store.canviewinvoices:{storeId}")]
+        });
+        scopedClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("token", invoiceKey.ApiKey);
+        Assert.Equal(HttpStatusCode.Forbidden, (await scopedClient.GetAsync(infoPath)).StatusCode);
+
         // An authenticated user outside the store cannot see balances or settings.
         var outsiderEmail = $"outsider-{Guid.NewGuid():N}@example.test";
         using (var scope = host.Services.CreateScope())
@@ -169,6 +215,9 @@ public partial class HostSmokeTests
         await page.GotoAsync(invoice.CheckoutLink);
         await Assertions.Expect(page.Locator("body")).ToContainTextAsync("USDC");
         await Assertions.Expect(page.Locator("body")).ToContainTextAsync("1.234567");
+        await Assertions.Expect(page.Locator(".qr-container")).ToHaveAttributeAsync("data-qr-value", method.PaymentLink);
+        await Assertions.Expect(page.Locator(".qr-container svg")).ToBeVisibleAsync();
+        await Assertions.Expect(page.Locator(".qr-container")).ToHaveAttributeAsync("data-clipboard", method.PaymentLink);
         await page.ScreenshotAsync(new() { Path = Path.Combine(screenshots, "usdc-checkout.png"), FullPage = true });
         // Exercise BTCPay's actual package upload and queued installation. The
         // caller restarts the host and compares the installed assembly hash.

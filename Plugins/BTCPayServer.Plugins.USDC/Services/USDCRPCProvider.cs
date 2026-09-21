@@ -21,12 +21,12 @@ namespace BTCPayServer.Plugins.USDC.Services;
 
 public abstract class USDCRPCProvider<TConfigurationItem>(
     EventAggregator eventAggregator,
-    SettingsRepository settingsRepository,
+    USDCChainStateStore chainState,
     IHttpClientFactory httpClientFactory)
     where TConfigurationItem : USDCPluginConfigurationItem, IUSDCRpcConfigurationItem
 {
     private readonly EventAggregator _eventAggregator = eventAggregator;
-    private readonly SettingsRepository _settingsRepository = settingsRepository;
+    private readonly USDCChainStateStore _chainState = chainState;
     private readonly IHttpClientFactory _httpClientFactory = httpClientFactory;
     private IEventAggregatorSubscription? _eventAggregatorSubscription;
     private ImmutableDictionary<PaymentMethodId, RpcClient>? _walletRpcClients;
@@ -118,7 +118,7 @@ public abstract class USDCRPCProvider<TConfigurationItem>(
             return;
 
         var configuration = GetConfigurations()[pmi];
-        var listenerState = await _settingsRepository.GetSettingAsync<EVMBasedListenerState>(GetListenerStateSettingKey(configuration));
+        var listenerState = await _chainState.Get(GetListenerStateSettingKey(configuration));
         if (listenerState == null)
             return;
 

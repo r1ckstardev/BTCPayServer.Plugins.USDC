@@ -26,6 +26,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           submodules: recursive
       - uses: actions/setup-dotnet@v4
         with:
@@ -44,7 +45,7 @@ jobs:
       - run: dotnet run --project submodules/btcpayserver/BTCPayServer.PluginPacker -c Release -- artifacts/usdc BTCPayServer.Plugins.USDC artifacts/packed
       - name: Start isolated Anvil for canonical USDC fork transactions
         run: |
-          docker run --detach --name usdc-test-anvil -p 127.0.0.1:48545:8545 --entrypoint anvil ghcr.io/foundry-rs/foundry@sha256:0c00cb0bda1ab1b91c9a6bf60f4c76c09c1a8870824b6d4718afbabacf6f9a17 --host 0.0.0.0 --silent
+          docker run --detach --name usdc-test-anvil -p 127.0.0.1:48545:8545 --entrypoint anvil ghcr.io/foundry-rs/foundry@sha256:0c00cb0bda1ab1b91c9a6bf60f4c76c09c1a8870824b6d4718afbabacf6f9a17 --host 0.0.0.0 --accounts 0 --silent
           for attempt in {1..30}; do
             if curl -fsS -H 'Content-Type: application/json' --data '{"jsonrpc":"2.0","id":1,"method":"web3_clientVersion","params":[]}' http://127.0.0.1:48545 > /dev/null; then exit 0; fi
             sleep 1
@@ -71,10 +72,10 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: usdc-release-candidate-${{ github.sha }}
+          name: usdc-release-candidate-${{ github.event.pull_request.head.sha || github.sha }}
           path: |
             BTCPayServer.Plugins.USDC.Tests/TestResults/*.trx
-            artifacts/packed/**/*.btcpay
+            artifacts/packed/**
             artifacts/screenshots/*.png
             artifacts/*-commit.txt
             artifacts/package-sha256.txt

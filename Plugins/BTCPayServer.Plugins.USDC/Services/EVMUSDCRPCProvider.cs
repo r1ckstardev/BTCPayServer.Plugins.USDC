@@ -20,9 +20,9 @@ public class EVMUSDCRPCProvider : USDCRPCProvider<EVMUSDCLikeConfigurationItem>
 
     public EVMUSDCRPCProvider(USDCPluginConfiguration usdtPluginConfiguration,
         EventAggregator eventAggregator,
-        SettingsRepository settingsRepository,
+        USDCChainStateStore chainState,
         IHttpClientFactory httpClientFactory)
-        : base(eventAggregator, settingsRepository, httpClientFactory)
+        : base(eventAggregator, chainState, httpClientFactory)
     {
         _usdtPluginConfiguration = usdtPluginConfiguration;
         Initialize();

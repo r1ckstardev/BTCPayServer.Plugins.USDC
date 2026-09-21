@@ -20,9 +20,9 @@ public class SwaggerProvider : ISwaggerProvider
                     {
                         ""API_Key"": [
                             ""btcpay.store.canviewstoresettings""
-                        ],
-                        ""Basic"": []
-                    }
+                        ]
+                    },
+                    { ""Basic"": [] }
                 ],
                 ""parameters"": [
                   {
@@ -30,7 +30,7 @@ public class SwaggerProvider : ISwaggerProvider
                   },
                   {
                       ""$ref"": ""#/components/parameters/PaymentMethodId""
-                  },
+                  }
                 ],
                 ""responses"": {
                   ""200"": {

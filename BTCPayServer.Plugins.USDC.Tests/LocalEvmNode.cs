@@ -36,6 +36,7 @@ internal sealed class LocalEvmNode : IAsyncDisposable
         }
     }
     public bool FailRequests { get; set; }
+    public bool ThrottleRequests { get; set; }
     public int? PauseBlockHeight { get; set; }
     public TaskCompletionSource BlockRequestPaused { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
     public TaskCompletionSource ResumeBlockRequest { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -80,7 +81,7 @@ internal sealed class LocalEvmNode : IAsyncDisposable
             catch (Exception) when (_stopping) { break; }
             try
             {
-                if (FailRequests) { Interlocked.Increment(ref _failedRequests); context.Response.StatusCode = 503; continue; }
+                if (FailRequests || ThrottleRequests) { Interlocked.Increment(ref _failedRequests); context.Response.StatusCode = ThrottleRequests ? 429 : 503; continue; }
                 using var reader = new StreamReader(context.Request.InputStream);
                 var request = JObject.Parse(await reader.ReadToEndAsync());
                 if (PauseBlockHeight is { } pausedHeight && request["method"]!.Value<string>() == "eth_getBlockByNumber" &&

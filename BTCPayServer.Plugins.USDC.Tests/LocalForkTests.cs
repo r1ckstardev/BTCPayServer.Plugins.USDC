@@ -8,6 +8,7 @@ using BTCPayServer.Services.Invoices;
 using Microsoft.Extensions.Logging.Abstractions;
 using NBitcoin;
 using Nethereum.Hex.HexTypes;
+using Nethereum.JsonRpc.Client;
 using Nethereum.RPC.Eth.DTOs;
 using Newtonsoft.Json.Linq;
 using Xunit;
@@ -36,11 +37,21 @@ public class LocalForkTests(ITestOutputHelper output)
         async Task<JToken> Rpc(string method, params object[] parameters)
         {
             var request = new JObject { ["jsonrpc"] = "2.0", ["id"] = 1, ["method"] = method, ["params"] = JArray.FromObject(parameters) };
-            using var response = await http.PostAsync("", new StringContent(request.ToString(), Encoding.UTF8, "application/json"));
-            response.EnsureSuccessStatusCode();
-            var body = JObject.Parse(await response.Content.ReadAsStringAsync());
-            Assert.True(body["error"] is null, $"Local Anvil {method} failed: {body["error"]}");
-            return body["result"]!;
+            for (var attempt = 0; ; attempt++)
+            {
+                using var response = await http.PostAsync("", new StringContent(request.ToString(), Encoding.UTF8, "application/json"));
+                response.EnsureSuccessStatusCode();
+                var body = JObject.Parse(await response.Content.ReadAsStringAsync());
+                if (method == "anvil_reset" && attempt < 3 && body["error"] is { } error &&
+                    (error.ToString().Contains("HTTP error 5") || error.ToString().Contains("HTTP error 429") || error.ToString().Contains("HTTP error 408")))
+                {
+                    output.WriteLine("Transient upstream fork initialization failure; retrying before any local transaction.");
+                    await Task.Delay(TimeSpan.FromSeconds(2 * (attempt + 1)));
+                    continue;
+                }
+                Assert.True(body["error"] is null, $"Local Anvil {method} failed: {body["error"]}");
+                return body["result"]!;
+            }
         }
         Assert.Contains("anvil", (await Rpc("web3_clientVersion")).Value<string>()!, StringComparison.OrdinalIgnoreCase);
         var networks = new[]
@@ -75,7 +86,18 @@ public class LocalForkTests(ITestOutputHelper output)
                 var hash = (await Rpc("eth_sendTransaction", new { from, to = config.SmartContractAddress, data, gas = "0xf4240" })).Value<string>()!;
                 TransactionReceipt? receipt = null;
                 await HostSmokeTests.Eventually(async () =>
-                    (receipt = await web3.Eth.Transactions.GetTransactionReceipt.SendRequestAsync(hash)) is not null);
+                {
+                    try { return (receipt = await web3.Eth.Transactions.GetTransactionReceipt.SendRequestAsync(hash)) is not null; }
+                    catch (RpcResponseException e) when (e.Message.Contains("Fork Error") &&
+                        (e.Message.Contains("status: 408") || e.Message.Contains("status: 429") || e.Message.Contains("status: 5")))
+                    {
+                        // Before local mining completes, Anvil may query the
+                        // upstream for the unknown hash. Retry that read only;
+                        // never submit the transaction a second time.
+                        output.WriteLine($"{pmi}: transient upstream receipt lookup, retrying local hash {hash}");
+                        return false;
+                    }
+                });
                 Assert.NotNull(receipt);
                 Assert.Equal(BigInteger.One, receipt.Status.Value);
                 return receipt;

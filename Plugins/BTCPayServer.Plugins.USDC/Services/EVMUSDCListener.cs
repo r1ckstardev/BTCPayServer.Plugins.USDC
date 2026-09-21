@@ -22,7 +22,7 @@ using Newtonsoft.Json.Linq;
 namespace BTCPayServer.Plugins.USDC.Services;
 
 public class EVMUSDCListener(
-    ISettingsRepository settingsRepository,
+    USDCChainStateStore chainState,
     EventAggregator eventAggregator,
     EVMUSDCRPCProvider rpcProvider,
     USDCPluginConfiguration usdtPluginConfiguration,
@@ -33,7 +33,7 @@ public class EVMUSDCListener(
     PaymentService paymentService,
     USDCChainRecovery recovery = null!)
     : USDCListener<EVMUSDCLikeConfigurationItem, EVMUSDCPaymentData>(
-        settingsRepository,
+        chainState,
         eventAggregator,
         rpcProvider,
         activationService,

@@ -20,7 +20,7 @@ using Nethereum.Web3;
 namespace BTCPayServer.Plugins.USDC.Services;
 
 public abstract class USDCListener<TConfigurationItem, TPaymentData>(
-    ISettingsRepository settingsRepository,
+    USDCChainStateStore chainState,
     EventAggregator eventAggregator,
     USDCRPCProvider<TConfigurationItem> rpcProvider,
     USDCChainActivationService activationService,
@@ -71,7 +71,7 @@ public abstract class USDCListener<TConfigurationItem, TPaymentData>(
             {
                 using var scope = BeginLoggingScope(pmi);
                 if (!await activationService.IsActivatedAsync(pmi, token) &&
-                    await settingsRepository.GetSettingAsync<EVMBasedListenerState>(GetListenerStateSettingKey(config)) is null) delay = 30000;
+                    await chainState.Get(GetListenerStateSettingKey(config)) is null) delay = 30000;
                 else
                 {
                     var advanced = false;
@@ -79,7 +79,7 @@ public abstract class USDCListener<TConfigurationItem, TPaymentData>(
                     {
                         // Reload INSIDE the database lock: another host may have
                         // advanced the cursor since this worker's previous turn.
-                        var state = await settingsRepository.GetSettingAsync<EVMBasedListenerState>(GetListenerStateSettingKey(config));
+                        var state = await chainState.Get(GetListenerStateSettingKey(config));
                         if (state?.HaltReason is not null) { delay = 30000; return; }
                         try { advanced = await IndexOne(config, state, token); }
                         catch (USDCFinalityConflictException e)
@@ -290,7 +290,7 @@ public abstract class USDCListener<TConfigurationItem, TPaymentData>(
             throw new InvalidOperationException("RPC settings changed during indexing; replay using the new provider.");
     }
     private Task SaveState(TConfigurationItem config, EVMBasedListenerState state) =>
-        settingsRepository.UpdateSetting(state, GetListenerStateSettingKey(config));
+        chainState.Save(GetListenerStateSettingKey(config), state);
 
     protected sealed record USDCTransferMatch(string DestinationKey, string From, string To, BigInteger TotalAmount, string TransactionId);
 }

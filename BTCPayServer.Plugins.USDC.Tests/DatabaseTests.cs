@@ -22,6 +22,24 @@ public sealed class DatabaseFactAttribute : FactAttribute
 
 public class DatabaseTests
 {
+    [DatabaseFact]
+    public async Task CheckpointsAndHaltsRemainFreshAcrossIndependentWorkers()
+    {
+        var factory = Factory();
+        await using (var context = factory.CreateContext()) await context.Database.MigrateAsync();
+        var first = new USDCChainStateStore(factory);
+        var second = new USDCChainStateStore(Factory());
+        var key = "USDC.Test.Checkpoint." + Guid.NewGuid().ToString("N");
+        Assert.Null(await second.Get(key));
+        await first.Save(key, new EVMBasedListenerState { LastBlockHeight = 100 });
+        Assert.Equal(100, (long)(await second.Get(key))!.LastBlockHeight);
+        await first.Save(key, new EVMBasedListenerState { LastBlockHeight = 101, HaltReason = "Finalized history conflict" });
+        Assert.Equal(101, (long)(await second.Get(key))!.LastBlockHeight);
+        Assert.Equal("Finalized history conflict", (await second.Get(key))!.HaltReason);
+        await second.Save(key, new EVMBasedListenerState { LastBlockHeight = 102 });
+        Assert.Equal(102, (long)(await first.Get(key))!.LastBlockHeight);
+    }
+
     internal static ApplicationDbContextFactory Factory() => new(
         Options.Create(new DatabaseOptions { ConnectionString = Environment.GetEnvironmentVariable("USDC_TEST_POSTGRES")! }),
         NullLoggerFactory.Instance);
