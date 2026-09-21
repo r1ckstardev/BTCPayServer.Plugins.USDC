@@ -48,7 +48,7 @@ public partial class HostSmokeTests
     {
         await using var node = new LocalEvmNode();
         await using var replacementNode = new LocalEvmNode();
-        if (recoveryCase) node.FinalityHeightOverride = 100;
+        if (recoveryCase || browserCase) node.FinalityHeightOverride = 100;
         var usdcMethodId = amoyCase ? "USDC-AMOY" : "USDC-SEPOLIA";
         var chainId = amoyCase ? 80002 : 11155111;
         node.ChainId = replacementNode.ChainId = chainId;

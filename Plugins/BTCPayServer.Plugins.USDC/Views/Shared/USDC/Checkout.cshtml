@@ -1,0 +1,25 @@
+@model BTCPayServer.Models.InvoicingModels.CheckoutModel
+
+<template id="USDCCheckoutBody">
+    <div class="payment-box">
+        <p class="text-center fw-semibold mb-3" data-testid="usdc-checkout-network" v-text="model.paymentMethodName"></p>
+        <div v-if="model.invoiceBitcoinUrlQR" class="qr-container clipboard-button"
+             :data-qr-value="model.invoiceBitcoinUrlQR" :data-clipboard="model.invoiceBitcoinUrl">
+            <div><qrcode :value="model.invoiceBitcoinUrlQR" tag="div" :options="qrOptions"></qrcode></div>
+            <img class="qr-icon" :src="model.cryptoImage" :alt="model.paymentMethodName" />
+        </div>
+        <div v-if="model.address" class="input-group mt-3">
+            <div class="form-floating" :id="'Address_' + model.paymentMethodId">
+                <vc:truncate-center text="model.address" is-vue="true" padding="15" elastic="true" classes="form-control-plaintext" />
+                <label v-t="{ path: 'address', args: { paymentMethod: model.paymentMethodName }}"></label>
+            </div>
+        </div>
+    </div>
+</template>
+<script>
+    Vue.component('USDCCheckoutBody', {
+        props: ['model', 'nfcSupported', 'nfcScanning', 'nfcErrorMessage', 'nfcWarningMessage'],
+        template: '#USDCCheckoutBody',
+        components: { qrcode: VueQrcode }
+    });
+</script>

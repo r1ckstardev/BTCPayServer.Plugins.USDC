@@ -208,17 +208,35 @@ public partial class HostSmokeTests
         var invoice = await api.CreateInvoice(storeId, new CreateInvoiceRequest
         {
             Currency = "USDC", Amount = 1.234567m,
-            Checkout = new InvoiceDataBase.CheckoutOptions { PaymentMethods = ["USDC-SEPOLIA"], LazyPaymentMethods = false }
+            Checkout = new InvoiceDataBase.CheckoutOptions { PaymentMethods = ["USDC-SEPOLIA"], LazyPaymentMethods = false, SpeedPolicy = SpeedPolicy.HighSpeed }
         });
         var method = (await api.GetInvoicePaymentMethods(invoice.Id)).Single();
         Assert.Contains("uint256=1234567", method.PaymentLink);
         await page.GotoAsync(invoice.CheckoutLink);
+        await File.WriteAllTextAsync(Path.Combine(screenshots, "usdc-checkout.html"), await page.ContentAsync());
         await Assertions.Expect(page.Locator("body")).ToContainTextAsync("USDC");
         await Assertions.Expect(page.Locator("body")).ToContainTextAsync("1.234567");
+        await Assertions.Expect(page.GetByTestId("usdc-checkout-network")).ToHaveTextAsync("USDC on Sepolia (testnet)");
         await Assertions.Expect(page.Locator(".qr-container")).ToHaveAttributeAsync("data-qr-value", method.PaymentLink);
         await Assertions.Expect(page.Locator(".qr-container svg")).ToBeVisibleAsync();
         await Assertions.Expect(page.Locator(".qr-container")).ToHaveAttributeAsync("data-clipboard", method.PaymentLink);
         await page.ScreenshotAsync(new() { Path = Path.Combine(screenshots, "usdc-checkout.png"), FullPage = true });
+        node.Transfer(102, method.Destination, 1234567);
+        node.FinalizedHeight = 107;
+        await Eventually(async () => (await api.GetInvoice(invoice.Id)).Status == InvoiceStatus.Settled);
+        await page.GotoAsync($"/invoices/{invoice.Id}");
+        var paymentDetails = page.GetByTestId("usdc-payment-details");
+        await Assertions.Expect(paymentDetails).ToContainTextAsync("USDC-SEPOLIA");
+        await Assertions.Expect(paymentDetails).ToContainTextAsync("1.234567 USDC");
+        await Assertions.Expect(paymentDetails.Locator("a")).ToHaveAttributeAsync("href", new System.Text.RegularExpressions.Regex("^https://sepolia.etherscan.io/tx/0x[0-9a-f]{64}$"));
+        await page.ScreenshotAsync(new() { Path = Path.Combine(screenshots, "usdc-invoice-payment.png"), FullPage = true });
+        node.ForkFrom(102, 1);
+        var invoices = host.Services.GetRequiredService<InvoiceRepository>();
+        await Eventually(async () => (await invoices.GetInvoiceLogs(invoice.Id)).Any(l => l.Message.Contains("USDC reconciliation required")));
+        await page.ReloadAsync();
+        await Assertions.Expect(paymentDetails).ToContainTextAsync("USDC reconciliation required");
+        await Assertions.Expect(paymentDetails).ToContainTextAsync("Unaccounted");
+        await page.ScreenshotAsync(new() { Path = Path.Combine(screenshots, "usdc-reconciliation.png"), FullPage = true });
         // Exercise BTCPay's actual package upload and queued installation. The
         // caller restarts the host and compares the installed assembly hash.
         var package = Directory.GetFiles(Path.Combine(RepositoryRoot(), "artifacts", "packed"), "*.btcpay", SearchOption.AllDirectories).Single();

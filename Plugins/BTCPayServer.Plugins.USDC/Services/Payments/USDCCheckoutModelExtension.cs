@@ -23,7 +23,7 @@ public class USDCCheckoutModelExtension(
         if (context.Handler?.PaymentMethodId != PaymentMethodId)
             return;
 
-        context.Model.CheckoutBodyComponentName = BitcoinCheckoutModelExtension.CheckoutBodyComponentName;
+        context.Model.CheckoutBodyComponentName = "USDCCheckoutBody";
         context.Model.InvoiceBitcoinUrl = _paymentLinkExtension.GetPaymentLink(context.Prompt, context.UrlHelper);
         context.Model.InvoiceBitcoinUrlQR = context.Model.InvoiceBitcoinUrl;
         context.Model.ShowPayInWalletButton = false;
