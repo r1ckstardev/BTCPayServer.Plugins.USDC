@@ -10,6 +10,7 @@ using StoreData = BTCPayServer.Data.StoreData;
 
 namespace BTCPayServer.Plugins.USDC.Tests;
 
+[Collection("USDC PostgreSQL fixtures")]
 public class ReservationLifecycleTests
 {
     [Theory]

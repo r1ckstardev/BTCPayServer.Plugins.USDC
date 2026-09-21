@@ -20,6 +20,9 @@ public sealed class DatabaseFactAttribute : FactAttribute
     }
 }
 
+// These classes share the disposable database schema. Serialize fixture migration;
+// allocation concurrency is exercised explicitly with independent connections.
+[Collection("USDC PostgreSQL fixtures")]
 public class DatabaseTests
 {
     [DatabaseFact]
