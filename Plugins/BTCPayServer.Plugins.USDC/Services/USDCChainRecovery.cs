@@ -29,7 +29,6 @@ public sealed class USDCChainRecovery(
 {
     public sealed class Observation
     {
-        public int Version { get; set; } = 2;
         public required string Id { get; init; }
         public required string InvoiceId { get; init; }
         public required string From { get; init; }

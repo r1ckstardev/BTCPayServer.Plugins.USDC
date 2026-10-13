@@ -4,6 +4,7 @@ using System.Globalization;
 using System.Linq;
 using System.Numerics;
 using System.Text.RegularExpressions;
+using BTCPayServer.Plugins.USDC.Configuration.EVM;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 
@@ -12,7 +13,6 @@ namespace BTCPayServer.Plugins.USDC.Services.Payments;
 public enum USDCPaymentLinkFormat
 {
     Standard = 0,
-    StandardWithoutAmount = 1,
     AddressOnly = 2,
     Custom = 3
 }
@@ -21,18 +21,16 @@ internal static class USDCPaymentLinkFormats
 {
     internal const int MaxTemplateLength = 2048;
     internal const int MaxRenderedLength = 4096;
+    internal const string SampleDestination = "0x742d35cc6634c0532925a3b844bc454e4438f44e";
 
-    internal static readonly string[] CommonPlaceholders =
-        ["{to}", "{amount}", "{amountUnits}", "{smartContractAddress}"];
-
-    internal static readonly string[] EvmPlaceholders =
-        [.. CommonPlaceholders, "{chainId}"];
+    internal static readonly string[] Placeholders =
+        ["{to}", "{amount}", "{amountUnits}", "{smartContractAddress}", "{chainId}"];
 
     private static readonly Regex PlaceholderPattern = new(@"\{[^{}]*\}", RegexOptions.CultureInvariant);
 
-    internal static USDCPaymentLinkFormat ResolveEvm(USDCPaymentLinkFormat? format, string? template)
+    internal static USDCPaymentLinkFormat Resolve(USDCPaymentLinkFormat? format, string? template)
     {
-        if (format is { } explicitFormat && IsSupported(explicitFormat, true))
+        if (format is { } explicitFormat && Enum.IsDefined(explicitFormat))
             return explicitFormat;
 
         if (format is null && !string.IsNullOrWhiteSpace(template))
@@ -41,7 +39,7 @@ internal static class USDCPaymentLinkFormats
         return USDCPaymentLinkFormat.Standard;
     }
 
-    internal static USDCPaymentLinkFormat? ReadFormat(JToken? details, bool isEvm)
+    internal static USDCPaymentLinkFormat? ReadFormat(JToken? details)
     {
         if (details is null)
             return null;
@@ -56,7 +54,7 @@ internal static class USDCPaymentLinkFormats
         try
         {
             var format = token.ToObject<USDCPaymentLinkFormat?>();
-            return format is { } explicitFormat && IsSupported(explicitFormat, isEvm)
+            return format is { } explicitFormat && Enum.IsDefined(explicitFormat)
                 ? explicitFormat
                 : USDCPaymentLinkFormat.Standard;
         }
@@ -67,42 +65,22 @@ internal static class USDCPaymentLinkFormats
         }
     }
 
-    internal static bool IsSupported(USDCPaymentLinkFormat format, bool isEvm)
-    {
-        return Enum.IsDefined(format) && (!isEvm || format != USDCPaymentLinkFormat.StandardWithoutAmount);
-    }
-
-    internal static bool LegacyExcludeAmount(USDCPaymentLinkFormat format, string? template)
-    {
-        return format is USDCPaymentLinkFormat.StandardWithoutAmount or USDCPaymentLinkFormat.AddressOnly ||
-               format == USDCPaymentLinkFormat.Custom &&
-               template?.Contains("{amount}", StringComparison.Ordinal) != true &&
-               template?.Contains("{amountUnits}", StringComparison.Ordinal) != true;
-    }
-
     internal static string? ValidateSelection(
         USDCPaymentLinkFormat format,
         string? template,
-        bool isEvm,
-        IReadOnlyDictionary<string, string>? templateValues = null)
+        IReadOnlyDictionary<string, string> templateValues)
     {
-        if (!IsSupported(format, isEvm))
-            return isEvm
-                ? "The selected payment link format is not supported for EVM chains."
-                : "The selected payment link format is not supported for TRON.";
+        if (!Enum.IsDefined(format))
+            return "The selected payment link format is not supported.";
 
         if (format != USDCPaymentLinkFormat.Custom)
             return null;
 
-        var error = ValidateTemplate(template, isEvm);
-        if (error is not null || templateValues is null)
-            return error;
-
-        TryRenderTemplate(template, isEvm, templateValues, out _, out error);
+        TryRenderTemplate(template, templateValues, out _, out var error);
         return error;
     }
 
-    internal static string? ValidateTemplate(string? template, bool isEvm)
+    internal static string? ValidateTemplate(string? template)
     {
         if (string.IsNullOrWhiteSpace(template))
             return "A payment link template is required when Custom format is selected.";
@@ -113,11 +91,9 @@ internal static class USDCPaymentLinkFormats
         if (template.Any(char.IsControl))
             return "The payment link template cannot contain control characters.";
 
-        var allowedPlaceholders = isEvm ? EvmPlaceholders : CommonPlaceholders;
-        var matches = PlaceholderPattern.Matches(template);
-        foreach (Match match in matches)
+        foreach (Match match in PlaceholderPattern.Matches(template))
         {
-            if (!allowedPlaceholders.Contains(match.Value, StringComparer.Ordinal))
+            if (!Placeholders.Contains(match.Value, StringComparer.Ordinal))
                 return $"Unknown or unsupported payment link placeholder: {match.Value}.";
         }
 
@@ -133,12 +109,11 @@ internal static class USDCPaymentLinkFormats
 
     internal static bool TryRenderTemplate(
         string? template,
-        bool isEvm,
         IReadOnlyDictionary<string, string> values,
         out string? rendered,
         out string? error)
     {
-        error = ValidateTemplate(template, isEvm);
+        error = ValidateTemplate(template);
         if (error is not null)
         {
             rendered = null;
@@ -178,19 +153,20 @@ internal static class USDCPaymentLinkFormats
         decimal due,
         int divisibility,
         string smartContractAddress,
-        int? chainId = null)
+        int chainId)
     {
-        var values = new Dictionary<string, string>(StringComparer.Ordinal)
+        return new Dictionary<string, string>(StringComparer.Ordinal)
         {
             ["{to}"] = destination,
             ["{amount}"] = due.ToString(CultureInfo.InvariantCulture),
             ["{amountUnits}"] = ToBaseUnits(due, divisibility).ToString(CultureInfo.InvariantCulture),
-            ["{smartContractAddress}"] = smartContractAddress
+            ["{smartContractAddress}"] = smartContractAddress,
+            ["{chainId}"] = chainId.ToString(CultureInfo.InvariantCulture)
         };
-
-        if (chainId is not null)
-            values["{chainId}"] = chainId.Value.ToString(CultureInfo.InvariantCulture);
-
-        return values;
     }
+
+    // Values used to validate and preview a custom template before any invoice exists.
+    internal static IReadOnlyDictionary<string, string> SampleTemplateValues(EVMUSDCLikeConfigurationItem config) =>
+        CreateTemplateValues(SampleDestination, 12.34m, config.Divisibility,
+            config.SmartContractAddress.ToLowerInvariant(), config.ChainId);
 }

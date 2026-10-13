@@ -1,7 +1,5 @@
-using System;
 using System.Linq;
 using System.Threading.Tasks;
-using AngleSharp.Text;
 using BTCPayServer.Abstractions.Constants;
 using BTCPayServer.Client;
 using BTCPayServer.Data;
@@ -27,47 +25,35 @@ public class GreenfieldEVMUSDCLikeStoreController(
     USDCAddressAllocator addressAllocator,
     USDCPluginConfiguration pluginConfiguration) : ControllerBase
 {
-
     private StoreData StoreData => HttpContext.GetStoreData();
 
     [Authorize(Policy = Policies.CanViewStoreSettings, AuthenticationSchemes = AuthenticationSchemes.Greenfield)]
     [HttpGet("~/api/v1/stores/{storeId}/evmUSDClike/{paymentMethodId}")]
     public async Task<IActionResult> GetUSDCLikeStoreInformation(PaymentMethodId paymentMethodId)
     {
-        if (pluginConfiguration.EVMUSDCLikeConfigurationItems.ContainsKey(paymentMethodId) == false)
+        if (!pluginConfiguration.EVMUSDCLikeConfigurationItems.ContainsKey(paymentMethodId))
             return NotFound();
 
-        var excludeFilters = StoreData.GetStoreBlob().GetExcludedPaymentMethods();
         var matchedPaymentMethodConfig =
             StoreData.GetPaymentMethodConfig<EVMUSDCPaymentMethodConfig>(paymentMethodId, handlers);
-
         if (matchedPaymentMethodConfig == null)
             return NotFound();
 
-        var addresses = (matchedPaymentMethodConfig.Addresses ?? [])
-            .Where(address => !string.IsNullOrWhiteSpace(address))
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .ToArray();
+        var addresses = matchedPaymentMethodConfig.Addresses ?? [];
         var balances = await evmUSDCRpcProvider.GetBalances(paymentMethodId, addresses);
-        var reservedAddresses =
-            await addressAllocator.GetUsedAddresses(paymentMethodId, addresses);
+        var reservedAddresses = await addressAllocator.GetUsedAddresses(paymentMethodId, addresses);
 
-        var data = new EVMUSDCPaymentMethodInformation
+        return Ok(new EVMUSDCPaymentMethodInformation
         {
             StoreId = StoreData.Id,
             PaymentMethodId = paymentMethodId.ToString(),
-            Enabled = !excludeFilters.Match(paymentMethodId),
-            Addresses = addresses.Select(s =>
-                new EVMUSDCPaymentMethodInformation.EVMUSDCPaymentMethodAddressInformation()
-                {
-                    Available = reservedAddresses.Contains(s) == false,
-                    Balance = balances.Single(x => x.Item1 == s).Item2 == null
-                        ? null
-                        : balances.Single(x => x.Item1 == s).Item2!.Value,
-                    Value = s
-                }).ToArray()
-        };
-
-        return Ok(data);
+            Enabled = !StoreData.GetStoreBlob().GetExcludedPaymentMethods().Match(paymentMethodId),
+            Addresses = addresses.Select(s => new EVMUSDCPaymentMethodInformation.EVMUSDCPaymentMethodAddressInformation
+            {
+                Available = !reservedAddresses.Contains(s),
+                Balance = balances.Single(x => x.Item1 == s).Item2,
+                Value = s
+            }).ToArray()
+        });
     }
 }

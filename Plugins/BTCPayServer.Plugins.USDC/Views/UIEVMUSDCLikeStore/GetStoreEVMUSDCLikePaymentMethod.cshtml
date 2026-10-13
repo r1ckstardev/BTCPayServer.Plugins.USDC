@@ -49,17 +49,6 @@
                 You can add multiple addresses separated by a comma or a new line.
             </div>
         </form>
-        @if (Model.EmptyAddressCount > 0)
-        {
-            <div class="alert alert-warning mt-3" role="alert">
-                <p>The saved address list contains empty entries (@Model.EmptyAddressCount). These entries cannot receive payments.</p>
-                <form method="post" asp-action="DeleteEmptyAddresses"
-                      asp-route-storeId="@Context.GetRouteValue("storeId")"
-                      asp-route-paymentMethodId="@Context.GetRouteValue("paymentMethodId")">
-                    <button type="submit" class="btn btn-secondary">Remove empty entries</button>
-                </form>
-            </div>
-        }
         @if (Model.Addresses.Any())
         {
             <table class="table table-hover table-responsive-md">

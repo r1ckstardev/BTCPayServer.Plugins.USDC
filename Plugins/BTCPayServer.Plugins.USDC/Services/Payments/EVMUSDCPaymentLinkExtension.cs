@@ -15,11 +15,9 @@ public class EVMUSDCPaymentLinkExtension(PaymentMethodId paymentMethodId, USDCPl
 
     public string? GetPaymentLink(PaymentPrompt prompt, IUrlHelper? urlHelper)
     {
-        var configuration = pluginConfiguration.EVMUSDCLikeConfigurationItems[paymentMethodId];
+        var configuration = pluginConfiguration.EVMUSDCLikeConfigurationItems[PaymentMethodId];
         var template = prompt.Details?.Value<string?>("paymentLinkTemplate");
-        var format = USDCPaymentLinkFormats.ResolveEvm(
-            USDCPaymentLinkFormats.ReadFormat(prompt.Details, true),
-            template);
+        var format = USDCPaymentLinkFormats.Resolve(USDCPaymentLinkFormats.ReadFormat(prompt.Details), template);
         return BuildPaymentLink(
             prompt.Destination,
             configuration.SmartContractAddress,
@@ -35,26 +33,9 @@ public class EVMUSDCPaymentLinkExtension(PaymentMethodId paymentMethodId, USDCPl
         string smartContractAddress,
         int chainId,
         int divisibility,
-        decimal due)
-    {
-        return BuildPaymentLink(
-            destination,
-            smartContractAddress,
-            chainId,
-            divisibility,
-            due,
-            USDCPaymentLinkFormat.Standard,
-            null);
-    }
-
-    internal static string? BuildPaymentLink(
-        string? destination,
-        string smartContractAddress,
-        int chainId,
-        int divisibility,
         decimal due,
-        USDCPaymentLinkFormat format,
-        string? template)
+        USDCPaymentLinkFormat format = USDCPaymentLinkFormat.Standard,
+        string? template = null)
     {
         if (string.IsNullOrEmpty(destination))
             return null;
@@ -73,7 +54,7 @@ public class EVMUSDCPaymentLinkExtension(PaymentMethodId paymentMethodId, USDCPl
                 divisibility,
                 contract,
                 chainId);
-            if (USDCPaymentLinkFormats.TryRenderTemplate(template, true, values, out var rendered, out _))
+            if (USDCPaymentLinkFormats.TryRenderTemplate(template, values, out var rendered, out _))
                 return rendered;
         }
 

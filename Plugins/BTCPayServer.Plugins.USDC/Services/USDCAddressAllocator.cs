@@ -17,7 +17,7 @@ public sealed class USDCAddressAllocator(ApplicationDbContextFactory factory)
     private static string AddressKey(PaymentMethodId pmi, string address) => $"USDC.Address.{pmi}.{address.ToLowerInvariant()}";
     private static string InvoiceKey(PaymentMethodId pmi, string invoiceId) => $"USDC.InvoiceAddress.{pmi}.{invoiceId}";
     internal sealed record Claim(string StoreId, string InvoiceId, string Address,
-        int Version = 1, DateTimeOffset? CreatedAt = null, DateTimeOffset? MonitoringExpiration = null);
+        DateTimeOffset? CreatedAt = null, DateTimeOffset? MonitoringExpiration = null);
 
     public async Task<string?> Allocate(PaymentMethodId pmi, string storeId, string invoiceId, IEnumerable<string> addresses,
         DateTimeOffset? createdAt = null, DateTimeOffset? monitoringExpiration = null)
@@ -48,7 +48,7 @@ public sealed class USDCAddressAllocator(ApplicationDbContextFactory factory)
                 var existing = await context.Settings.AsNoTracking().SingleOrDefaultAsync(s => s.Id == addressKey);
                 if (existing is not null && await IsReserved(context, JsonConvert.DeserializeObject<Claim>(existing.Value)!, DateTimeOffset.UtcNow))
                     continue;
-                var json = JsonConvert.SerializeObject(new Claim(storeId, invoiceId, address, 2, createdAt, monitoringExpiration));
+                var json = JsonConvert.SerializeObject(new Claim(storeId, invoiceId, address, createdAt, monitoringExpiration));
                 await context.Database.ExecuteSqlInterpolatedAsync($"""
                     INSERT INTO "Settings" ("Id", "Value") VALUES ({addressKey}, CAST({json} AS jsonb))
                     ON CONFLICT ("Id") DO UPDATE SET "Value" = EXCLUDED."Value"
@@ -97,8 +97,6 @@ public sealed class USDCAddressAllocator(ApplicationDbContextFactory factory)
 
     private static async Task<bool> IsReserved(ApplicationDbContext context, Claim claim, DateTimeOffset now)
     {
-        // Never silently recycle claims created by the permanent-address prototype.
-        if (claim.Version < 2) return true;
         var invoice = await context.Invoices.AsNoTracking().SingleOrDefaultAsync(i => i.Id == claim.InvoiceId);
         if (invoice is null)
             return claim.MonitoringExpiration is null || claim.MonitoringExpiration > now;

@@ -58,7 +58,7 @@ Providers must support `eth_chainId`, `eth_call`, `eth_syncing`, `eth_blockNumbe
 
 The compatibility target and declared minimum are **BTCPay Server 2.4.4**, using .NET 10. Earlier hosts are unsupported. Do not upgrade a live host just to evaluate this branch.
 
-1. Use a disposable BTCPay test host with a fresh database. Migration from the permanent-address prototype is excluded; databases are never automatically reset.
+1. Use a disposable BTCPay test host with a fresh database.
 2. Build the exact reviewed source using the official packer below, upload the `.btcpay` file through **Server Settings > Plugins**, and restart through the host's normal process.
 3. Check each USDC server settings page and RPC synchronization status.
 4. Under the store's USDC navigation, add addresses you control and enable the selected chain. Keep wallet keys outside BTCPay. Multiple addresses allow concurrent invoices. Use dedicated addresses; do not share their pool with a separate BTCPay installation.
@@ -67,7 +67,7 @@ The compatibility target and declared minimum are **BTCPay Server 2.4.4**, using
 
 For testnet checkout, obtain test USDC through [Circle's faucet](https://faucet.circle.com/) and Sepolia ETH for gas. Create a small invoice, pay using the exact displayed network/contract/address, and verify detection and settlement. Local-fork transactions are not public testnet evidence.
 
-Address input is validated before saving. Duplicates are handled without creating extra entries; removal ignores address case. Adding addresses preserves other payment settings. Legacy blank entries can be removed explicitly with **Remove empty entries**. Balances display all six decimal places when needed.
+Address input is validated before saving. Duplicates are handled without creating extra entries; removal ignores address case. Adding addresses preserves other payment settings. Balances display all six decimal places when needed.
 
 ## Reservations and payment lifecycle
 
@@ -91,7 +91,7 @@ An observation's invoice association is persisted before its payment write. A cu
 
 BTCPay does not automatically reopen a settled invoice. If its payment is removed or deconfirmed, the plugin corrects payment accounting and retains a reconciliation notice in payment details and invoice events, with a BTCPay notification to the store. Review goods/services already delivered. Notification delivery is at least once across crashes, so a retry can repeat the notification.
 
-A history conflict at the finalized checkpoint halts that chain and displays a diagnostic in the server sync summary. Preserve evidence, compare trusted RPC providers, and reconcile affected invoices manually. Do not clear the checkpoint to suppress the error. Prototype scan state without recovery history also stops with a diagnostic; use fresh staging data.
+A history conflict at the finalized checkpoint halts that chain and displays a diagnostic in the server sync summary. Preserve evidence, compare trusted RPC providers, and reconcile affected invoices manually. Do not clear the checkpoint to suppress the error.
 
 Back up the complete BTCPay database, configuration and plugin directory together. Reservation/assignment records (`USDC.Address.*`, `USDC.InvoiceAddress.*`), transfer journals (`USDC.Transfer.v2.*`) and listener settings are part of the database. Never delete these to make an address available. Restoring an old database while continuing to accept payments risks losing assignments and observations.
 

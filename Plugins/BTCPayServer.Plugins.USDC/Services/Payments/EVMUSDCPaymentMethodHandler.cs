@@ -13,7 +13,6 @@ namespace BTCPayServer.Plugins.USDC.Services.Payments;
 public class EVMUSDCPaymentMethodHandler(
     EVMUSDCLikeConfigurationItem configurationItem,
     EVMUSDCRPCProvider rpcProvider,
-    CurrencyNameTable currencyNameTable,
     USDCAddressAllocator addressAllocator) : IPaymentMethodHandler
 {
     public JsonSerializer Serializer { get; } = BlobSerializer.CreateSerializer().Serializer;
@@ -49,9 +48,7 @@ public class EVMUSDCPaymentMethodHandler(
 
     internal static EVMUSDCLikeOnChainPaymentMethodDetails CreatePaymentPromptDetails(EVMUSDCPaymentMethodConfig config)
     {
-        var paymentLinkFormat = USDCPaymentLinkFormats.ResolveEvm(
-            config.PaymentLinkFormat,
-            config.PaymentLinkTemplate);
+        var paymentLinkFormat = USDCPaymentLinkFormats.Resolve(config.PaymentLinkFormat, config.PaymentLinkTemplate);
         return new EVMUSDCLikeOnChainPaymentMethodDetails
         {
             PaymentLinkFormat = paymentLinkFormat,
@@ -93,29 +90,17 @@ public class EVMUSDCPaymentMethodHandler(
         var previousConfig = validationContext.PreviousConfig is null
             ? null
             : ParsePaymentMethodConfig(validationContext.PreviousConfig);
-        var templateValues = USDCPaymentLinkFormats.CreateTemplateValues(
-            "0x742d35cc6634c0532925a3b844bc454e4438f44e",
-            12.34m,
-            configurationItem.Divisibility,
-            configurationItem.SmartContractAddress.ToLowerInvariant(),
-            configurationItem.ChainId);
+        var templateValues = USDCPaymentLinkFormats.SampleTemplateValues(configurationItem);
         if (config.PaymentLinkFormat is { } format)
         {
-            var error = USDCPaymentLinkFormats.ValidateSelection(
-                format,
-                config.PaymentLinkTemplate,
-                true,
-                templateValues);
+            var error = USDCPaymentLinkFormats.ValidateSelection(format, config.PaymentLinkTemplate, templateValues);
             if (error is not null)
                 validationContext.ModelState.AddModelError(nameof(config.PaymentLinkFormat), error);
         }
         else if (!string.IsNullOrWhiteSpace(config.PaymentLinkTemplate))
         {
             var error = USDCPaymentLinkFormats.ValidateSelection(
-                USDCPaymentLinkFormat.Custom,
-                config.PaymentLinkTemplate,
-                true,
-                templateValues);
+                USDCPaymentLinkFormat.Custom, config.PaymentLinkTemplate, templateValues);
             if (error is not null)
                 validationContext.ModelState.AddModelError(nameof(config.PaymentLinkTemplate), error);
         }

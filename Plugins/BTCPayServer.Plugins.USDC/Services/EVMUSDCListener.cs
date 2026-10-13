@@ -130,8 +130,6 @@ public class EVMUSDCListener(
             CheckClient(pmi, client);
             await SaveState(config, state);
         }
-        if (state.Version != 2 || state.FinalizedHash is null || state.Blocks.Count == 0)
-            throw new USDCFinalityConflictException("Prototype scan state has no recovery history. Use a fresh staging database; automatic migration/reset is disabled.");
 
         var anchorNow = await GetBlock(client, state.FinalizedHeight);
         if (!USDCChainRecovery.Same(anchorNow.BlockHash, state.FinalizedHash))
