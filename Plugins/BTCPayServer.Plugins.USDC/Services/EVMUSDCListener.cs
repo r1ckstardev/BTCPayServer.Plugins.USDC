@@ -414,9 +414,10 @@ public class EVMUSDCListener(
         }
     }
     private static USDCBlockRecord Record(Block block) => new(block.BlockHash, block.ParentHash);
-    private static async Task<BlockWithTransactions> GetBlock(Web3 client, long height)
+    private static async Task<BlockWithTransactionHashes> GetBlock(Web3 client, long height)
     {
-        var block = await client.Eth.Blocks.GetBlockWithTransactionsByNumber.SendRequestAsync(new BlockParameter(new HexBigInteger(height)));
+        // Only header fields are used; full transaction bodies are megabytes on mainnet.
+        var block = await client.Eth.Blocks.GetBlockWithTransactionsHashesByNumber.SendRequestAsync(new BlockParameter(new HexBigInteger(height)));
         if (block?.Number?.Value != height || string.IsNullOrWhiteSpace(block.BlockHash) || string.IsNullOrWhiteSpace(block.ParentHash))
             throw new InvalidOperationException($"RPC did not return complete block {height}.");
         return block;

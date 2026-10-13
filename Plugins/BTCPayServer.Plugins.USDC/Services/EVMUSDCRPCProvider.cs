@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.Collections.Immutable;
 using System.Linq;
 using System.Net.Http;
+using System.Runtime.CompilerServices;
 using System.Threading.Tasks;
 using BTCPayServer.Payments;
 using BTCPayServer.Plugins.USDC.Configuration;
@@ -25,6 +26,7 @@ public class EVMUSDCRPCProvider
     private readonly EventAggregator _eventAggregator;
     private readonly USDCChainStateStore _chainState;
     private readonly IHttpClientFactory _httpClientFactory;
+    private readonly ConditionalWeakTable<IClient, IClient> _validatedClients = new();
     private ImmutableDictionary<PaymentMethodId, RpcClient> _clients = ImmutableDictionary<PaymentMethodId, RpcClient>.Empty;
 
     public EVMUSDCRPCProvider(USDCPluginConfiguration pluginConfiguration,
@@ -74,6 +76,10 @@ public class EVMUSDCRPCProvider
     {
         var config = _pluginConfiguration.EVMUSDCLikeConfigurationItems[pmi];
         var web3 = client ?? GetWeb3Client(pmi);
+        // Settings changes create a new client, so each client is checked once
+        // instead of spending two RPC calls on every indexed block.
+        if (_validatedClients.TryGetValue(web3.Client, out _))
+            return;
         var chainId = await web3.Eth.ChainId.SendRequestAsync();
         if (chainId.Value != config.ChainId)
             throw new InvalidOperationException("The RPC endpoint is connected to the wrong USDC network.");
@@ -81,13 +87,14 @@ public class EVMUSDCRPCProvider
             .QueryAsync<byte>(config.SmartContractAddress, new DecimalsFunction());
         if (decimals != config.Divisibility)
             throw new InvalidOperationException("The USDC contract returned unexpected token decimals.");
+        _validatedClients.AddOrUpdate(web3.Client, web3.Client);
     }
 
     internal static async Task<HexBigInteger> GetFinalizedHeight(Web3 web3)
     {
         var finalized = new BlockParameter();
         finalized.SetValue(BlockParameter.BlockParameterType.finalized);
-        var block = await web3.Eth.Blocks.GetBlockWithTransactionsByNumber.SendRequestAsync(finalized);
+        var block = await web3.Eth.Blocks.GetBlockWithTransactionsHashesByNumber.SendRequestAsync(finalized);
         return block?.Number ?? throw new InvalidOperationException("The RPC endpoint did not return a finalized block.");
     }
 
