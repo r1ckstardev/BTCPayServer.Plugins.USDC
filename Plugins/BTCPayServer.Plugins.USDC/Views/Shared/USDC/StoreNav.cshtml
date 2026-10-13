@@ -1,0 +1,30 @@
+@using BTCPayServer
+@using BTCPayServer.Abstractions.Contracts
+@using BTCPayServer.Plugins.USDC.Configuration
+@using BTCPayServer.Plugins.USDC.Services
+@using BTCPayServer.Plugins.USDC.Services.Payments
+@using BTCPayServer.Payments
+@using BTCPayServer.Services.Invoices
+@using BTCPayServer.Data
+@inject IScopeProvider ScopeProvider
+@inject USDCPluginConfiguration Configuration
+@inject EVMUSDCRPCProvider RpcProvider
+@inject PaymentMethodHandlerDictionary Handlers
+@{
+    var store = Context.GetStoreData();
+    var excluded = store?.GetStoreBlob().GetExcludedPaymentMethods();
+}
+<li class="nav-item"><span class="nav-link">USDC</span></li>
+@foreach (var config in Configuration.EVMUSDCLikeConfigurationItems.Values)
+{
+    var pmi = config.GetPaymentMethodId();
+    var enabled = store?.GetPaymentMethodConfig<EVMUSDCPaymentMethodConfig>(pmi, Handlers) is not null && excluded?.Match(pmi) is false;
+    var status = !enabled ? "pending" : RpcProvider.IsAvailable(pmi) ? "enabled" : "disabled";
+    var active = Context.Request.RouteValues["paymentMethodId"]?.ToString() == pmi.ToString();
+    <li class="nav-item nav-item-sub">
+        <a class="nav-link @(active ? "active" : "")" asp-controller="UIEVMUSDCLikeStore" asp-action="GetStoreEVMUSDCLikePaymentMethod"
+           asp-route-storeId="@ScopeProvider.GetCurrentStoreId()" asp-route-paymentMethodId="@pmi">
+            <span class="me-2 btcpay-status btcpay-status--@status"></span><span>@config.Chain</span>
+        </a>
+    </li>
+}

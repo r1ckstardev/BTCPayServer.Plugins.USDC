@@ -1,0 +1,16 @@
+using System;
+using System.Numerics;
+
+namespace BTCPayServer.Plugins.USDC.Services;
+
+public class USDCRpcSummary
+{
+    public string? Diagnostic { get; set; }
+    public bool Synced { get; set; }
+    public BigInteger LatestBlockOnNode { get; set; }
+    public DateTime UpdatedAt { get; set; }
+    public bool RpcAvailable { get; set; }
+    public BigInteger HighestBlockOnChain { get; set; }
+    public BigInteger LatestBlockScanned { get; set; }
+    public bool Syncing { get; set; }
+}

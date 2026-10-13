@@ -1,0 +1,35 @@
+@using System.Globalization
+@using BTCPayServer.Payments
+@using BTCPayServer.Plugins.USDC.Services.Payments
+@using BTCPayServer.Services
+@using BTCPayServer.Services.Invoices
+@model BTCPayServer.Models.InvoicingModels.InvoiceDetailsModel
+@inject PaymentMethodHandlerDictionary Handlers
+@inject TransactionLinkProviders TransactionLinks
+@{
+    var payments = Model.Payments.Where(p => Handlers.TryGetValue(p.PaymentMethodId, out var h) && h is EVMUSDCPaymentMethodHandler).ToArray();
+}
+@if (payments.Length > 0)
+{
+    <section>
+        <h5>USDC payments</h5>
+        <table class="table table-hover" data-testid="usdc-payment-details">
+            <thead><tr><th>Network</th><th>Destination</th><th>Transaction</th><th>Confirmations</th><th>Amount</th><th>Status</th></tr></thead>
+            <tbody>
+            @foreach (var payment in payments)
+            {
+                var details = (USDCPaymentData)Handlers[payment.PaymentMethodId].ParsePaymentDetails(payment.Details);
+                <tr>
+                    <td>@payment.PaymentMethodId</td><td class="text-break">@details.To</td>
+                    <td><a href="@TransactionLinks.GetTransactionLink(payment.PaymentMethodId, payment.Id)" target="_blank" rel="noopener noreferrer">@payment.Id.Split('-')[0]</a></td>
+                    <td>@details.ConfirmationCount</td><td>@payment.Value.ToString("0.######", CultureInfo.InvariantCulture) USDC</td><td>@payment.Status</td>
+                </tr>
+                @if (details.ReconciliationNotice is not null)
+                {
+                    <tr><td colspan="6"><div class="alert alert-warning">@details.ReconciliationNotice</div></td></tr>
+                }
+            }
+            </tbody>
+        </table>
+    </section>
+}

@@ -1,0 +1,82 @@
+name: Build and test
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_HOST_AUTH_METHOD: trust
+          POSTGRES_DB: usdc_tests
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s --health-timeout 5s --health-retries 12
+    env:
+      USDC_TEST_POSTGRES: Host=127.0.0.1;Port=5432;Database=usdc_tests;Username=postgres
+      USDC_TEST_USDT_PATH: ${{ github.workspace }}/artifacts/usdt
+      USDC_TEST_ANVIL_URL: http://127.0.0.1:48545
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          submodules: recursive
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+      - uses: actions/checkout@v4
+        with:
+          repository: btcpayserver-tether/BTCPayServer.Plugins.USDt
+          ref: f1b3da1bc1ff2131cde946b938a2669e31f8fcc7
+          path: artifacts/reference-usdt
+          submodules: recursive
+      - run: dotnet publish Plugins/BTCPayServer.Plugins.USDC -c Release -m:1 -p:StaticWebAssetsEnabled=false -o artifacts/usdc
+      - run: dotnet publish artifacts/reference-usdt/BTCPayServer.Plugins.USDt -c Release -m:1 -p:StaticWebAssetsEnabled=false -o artifacts/usdt
+      - run: dotnet build BTCPayServer.Plugins.USDC.Tests -c Release -m:1 -p:StaticWebAssetsEnabled=false
+      - name: Install browser test runtime
+        run: pwsh BTCPayServer.Plugins.USDC.Tests/bin/Release/net10.0/playwright.ps1 install --with-deps chromium
+      - run: dotnet run --project submodules/btcpayserver/BTCPayServer.PluginPacker -c Release -- artifacts/usdc BTCPayServer.Plugins.USDC artifacts/packed
+      - name: Start isolated Anvil for canonical USDC fork transactions
+        run: |
+          docker run --detach --name usdc-test-anvil -p 127.0.0.1:48545:8545 --entrypoint anvil ghcr.io/foundry-rs/foundry@sha256:0c00cb0bda1ab1b91c9a6bf60f4c76c09c1a8870824b6d4718afbabacf6f9a17 --host 0.0.0.0 --accounts 0 --silent
+          for attempt in {1..30}; do
+            if curl -fsS -H 'Content-Type: application/json' --data '{"jsonrpc":"2.0","id":1,"method":"web3_clientVersion","params":[]}' http://127.0.0.1:48545 > /dev/null; then exit 0; fi
+            sleep 1
+          done
+          exit 1
+      - run: dotnet test BTCPayServer.Plugins.USDC.Tests -c Release -m:1 -p:StaticWebAssetsEnabled=false --no-build --logger trx
+      - name: Require all integration tests to execute
+        run: |
+          python3 - <<'PY'
+          import glob, xml.etree.ElementTree as ET
+          files = glob.glob('BTCPayServer.Plugins.USDC.Tests/TestResults/*.trx')
+          assert files, 'No test results'
+          for file in files:
+              root = ET.parse(file).getroot()
+              counters = root.find('.//{*}Counters').attrib
+              assert int(counters['total']) == int(counters['passed']), counters
+          PY
+      - name: Record package provenance
+        run: |
+          git rev-parse HEAD > artifacts/tested-commit.txt
+          git submodule status > artifacts/host-commit.txt
+          find artifacts/packed -name '*.btcpay' -exec sha256sum {} \; > artifacts/package-sha256.txt
+          dotnet --info > artifacts/dotnet-info.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: usdc-release-candidate-${{ github.event.pull_request.head.sha || github.sha }}
+          path: |
+            BTCPayServer.Plugins.USDC.Tests/TestResults/*.trx
+            artifacts/packed/**
+            artifacts/screenshots/*.png
+            artifacts/*-commit.txt
+            artifacts/package-sha256.txt
+            artifacts/dotnet-info.txt
