@@ -6,7 +6,7 @@ Accept native USDC payments on Ethereum directly to your own wallet. This plugin
 
 The plugin monitors payments. It does not generate wallets, exchange tokens, sweep funds, issue refunds, or send payouts. Sepolia is available for testing the Ethereum payment flow.
 
-**Current status:** the implementation is under review in [PR #1](https://github.com/rockstardev/BTCPayServer.Plugins.USDC/pull/1). A public Plugin Builder release and public-network payment acceptance are pending. See [acceptance evidence](docs/acceptance.md).
+**Current status:** version 0.0.1 is the first release, unlisted on Plugin Builder while public-network payment acceptance is pending. See [acceptance evidence](docs/acceptance.md).
 
 ## Plugin Builder listing
 
@@ -19,15 +19,13 @@ Copy these values into the Plugin Builder registration and settings forms. The d
 | Plugin description | Accept native USDC payments on Ethereum directly to your own wallet. This plugin adds USDC to BTCPay Server invoices and checkout, detects incoming transfers, and tracks confirmations and settlement. It supports partial payments, overpayments, and reusable receiving addresses. Wallet keys stay with you; no exchange account or USDt plugin is required. |
 | Logo | Upload [docs/assets/usdc.png](docs/assets/usdc.png), the unmodified USDC token logo from Circle's brand kit. |
 | Git repository | `https://github.com/rockstardev/BTCPayServer.Plugins.USDC` |
-| Git branch or tag | `feat/usdc-ethereum` for the current review build. Use the reviewed release tag when publishing. |
+| Git branch or tag | The release tag, for example `v0.0.1`. |
 | Directory to the plugin's project | `Plugins/BTCPayServer.Plugins.USDC` |
 | Dotnet build configuration | `Release` |
-| Documentation link | `https://github.com/rockstardev/BTCPayServer.Plugins.USDC/blob/feat/usdc-ethereum/README.md` |
+| Documentation link | `https://github.com/rockstardev/BTCPayServer.Plugins.USDC/blob/master/README.md` |
 | Plugin Demo Video URL | Leave blank; no demo video is supplied. |
 
-The intended public listing is `https://plugin-builder.btcpayserver.org/public/plugins/usdc`. The package identifier is `BTCPayServer.Plugins.USDC`, the proposed package version is `0.2.0.0`, and the minimum BTCPay Server version is `2.4.4`. Version and compatibility come from the built package; they are not a claim that it has been published.
-
-The current implementation is on **`feat/usdc-ethereum`**. Set that branch explicitly rather than building the older `master` branch. The repository is private at this checkpoint, so the builder needs source access and public readers need repository access to follow the documentation link. Upload the included PNG for the listing logo so its display does not depend on private GitHub raw-file access.
+The listing is `https://plugin-builder.btcpayserver.org/public/plugins/usdc`. The package identifier is `BTCPayServer.Plugins.USDC` and the minimum BTCPay Server version is `2.4.4`; the version comes from the project file. Upload the included PNG as the listing logo.
 
 The PNG and SVG logo files are supplied unchanged from [Circle's official brand kit](https://www.circle.com/pressroom#brand-kit). Their source and checksums are recorded in [docs/assets/README.md](docs/assets/README.md).
 
@@ -114,15 +112,13 @@ Requires Greenfield authentication and `btcpay.store.canviewstoresettings` for t
 ```sh
 git clone --recurse-submodules https://github.com/rockstardev/BTCPayServer.Plugins.USDC.git
 cd BTCPayServer.Plugins.USDC
-git checkout feat/usdc-ethereum
-git submodule update --init --recursive
 dotnet publish Plugins/BTCPayServer.Plugins.USDC -c Release -m:1 -p:StaticWebAssetsEnabled=false -o artifacts/usdc
 dotnet build BTCPayServer.Plugins.USDC.Tests -c Release -m:1 -p:StaticWebAssetsEnabled=false
 pwsh BTCPayServer.Plugins.USDC.Tests/bin/Release/net10.0/playwright.ps1 install --with-deps chromium
 dotnet run --project submodules/btcpayserver/BTCPayServer.PluginPacker -c Release -- artifacts/usdc BTCPayServer.Plugins.USDC artifacts/packed
 ```
 
-Package path: `artifacts/packed/BTCPayServer.Plugins.USDC/0.2.0.0/BTCPayServer.Plugins.USDC.btcpay`. Release version remains proposed until the readiness handoff. Private repository access is currently required.
+Package path: `artifacts/packed/BTCPayServer.Plugins.USDC/<version>/BTCPayServer.Plugins.USDC.btcpay`.
 
 The Ubuntu workflow provisions PostgreSQL and a pinned Anvil container, publishes both plugins, installs Chromium, executes required integration tests, rejects skips, and retains the package, SHA256, tested source SHA, pinned host SHA, test results and screenshots. Host tests verify that the published DLL matches the tested assembly.
 
