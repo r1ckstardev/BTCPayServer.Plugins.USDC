@@ -3,7 +3,7 @@ namespace BTCPayServer.Plugins.USDC.Controllers.Models;
 public class EVMUSDCPaymentMethodInformation
 {
     public required string StoreId { get; init; }
-    
+
     public required string PaymentMethodId { get; init; }
     public required bool Enabled { get; init; }
 

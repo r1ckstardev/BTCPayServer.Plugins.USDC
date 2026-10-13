@@ -8,12 +8,12 @@ public record struct ChainRef
     {
         Value = value.ToUpperInvariant();
     }
-    
+
     public static implicit operator ChainRef(string value)
     {
         return new ChainRef(value);
     }
-    
+
     public override string ToString()
     {
         return Value;
