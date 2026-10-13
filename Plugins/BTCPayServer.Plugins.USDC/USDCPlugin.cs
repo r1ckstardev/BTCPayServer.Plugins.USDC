@@ -36,7 +36,6 @@ public class USDCPlugin : BaseBTCPayServerPlugin
         services.AddSingleton(configuration);
         services.AddSingleton<ISwaggerProvider, Controllers.SwaggerProvider>();
         services.AddSingleton<USDCChainActivationService>();
-        services.AddSingleton<USDCTrackedInvoiceProvider>();
         services.AddSingleton<USDCAddressAllocator>();
         services.AddSingleton<USDCChainRecovery>();
         services.AddSingleton<USDCChainStateStore>();

@@ -51,9 +51,32 @@ public sealed class USDCChainRecovery(
         var claim = await reservations.CurrentClaim(pmi, address);
         if (claim is null) return null;
         var invoice = await invoices.GetInvoice(claim.InvoiceId);
-        return invoice is not null && USDCTrackedInvoiceProvider.ShouldTrack(invoice, pmi, DateTimeOffset.UtcNow) &&
+        return invoice is not null && ShouldTrack(invoice, pmi, DateTimeOffset.UtcNow) &&
                timestamp.ToUnixTimeSeconds() >= invoice.InvoiceTime.ToUnixTimeSeconds() ? invoice : null;
     }
+
+    // Durable address claims decide what to watch. They survive restarts and
+    // long outages, so no invoice cache or history bootstrap is needed.
+    public async Task<HashSet<string>> WatchedAddresses(PaymentMethodId pmi, CancellationToken cancellationToken)
+    {
+        var watched = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var claims = await reservations.CurrentClaims(pmi);
+        if (claims.Length == 0) return watched;
+        var now = DateTimeOffset.UtcNow;
+        var claimed = await invoices.GetInvoices(new InvoiceQuery
+        {
+            InvoiceId = claims.Select(c => c.InvoiceId).Distinct().ToArray(),
+            IncludeArchived = true
+        }, cancellationToken);
+        foreach (var invoice in claimed)
+            if (ShouldTrack(invoice, pmi, now) && invoice.GetPaymentPrompt(pmi)!.Activated)
+                watched.Add(invoice.GetPaymentPrompt(pmi)!.Destination);
+        return watched;
+    }
+
+    internal static bool ShouldTrack(InvoiceEntity invoice, PaymentMethodId pmi, DateTimeOffset now) =>
+        !string.IsNullOrEmpty(invoice.GetPaymentPrompt(pmi)?.Destination) &&
+        USDCAddressAllocator.ShouldReserve(invoice.Status, invoice.MonitoringExpiration, now);
 
     public async Task WithChainLock(PaymentMethodId pmi, Func<Task> action, CancellationToken cancellationToken)
     {

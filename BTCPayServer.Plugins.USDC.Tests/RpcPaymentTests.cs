@@ -144,13 +144,13 @@ public class RpcPaymentTests
     }
 
     private sealed class TestListener(EVMUSDCRPCProvider rpc, USDCPluginConfiguration configuration)
-        : EVMUSDCListener(null!, null!, rpc, configuration, null!, null!, NullLogger<EVMUSDCListener>.Instance, null!, null!)
+        : EVMUSDCListener(null!, rpc, configuration, null!, null!, NullLogger<EVMUSDCListener>.Instance)
     {
         public async Task<(string Destination, BigInteger Amount, string Id)[]> Scan()
         {
             var transfers = await GetTransfersAsync(new PaymentMethodId("USDC-SEPOLIA"),
-                new BlockWithTransactions { Number = new HexBigInteger(100), BlockHash = BlockHash },
-                new Dictionary<string, InvoiceEntity> { [Destination] = null! }, CancellationToken.None);
+                new BlockWithTransactionHashes { Number = new HexBigInteger(100), BlockHash = BlockHash },
+                new HashSet<string> { Destination }, CancellationToken.None);
             return transfers.Select(t => (t.DestinationKey, t.TotalAmount, t.TransactionId)).ToArray();
         }
     }

@@ -1,15 +1,13 @@
 using System;
+using BTCPayServer.Payments;
 
 namespace BTCPayServer.Plugins.USDC.Configuration.EVM;
 
-public record EVMUSDCLikeConfigurationItem(string Chain) : USDCPluginConfigurationItem, IUSDCRpcConfigurationItem
+public record EVMUSDCLikeConfigurationItem(string Chain)
 {
-    public const string UnconfiguredSmartContractAddress = "0x0000000000000000000000000000000000000000";
-
     public required Uri JsonRpcUri { get; init; }
     public required string SmartContractAddress { get; init; }
-    public override string Chain { get; } = Chain;
-    public override required string Currency { get; init; }
+    public required string Currency { get; init; }
     public required string DisplayName { get; init; }
     public required int Divisibility { get; init; }
     public required string CryptoImagePath { get; init; }
@@ -29,9 +27,6 @@ public record EVMUSDCLikeConfigurationItem(string Chain) : USDCPluginConfigurati
     /// </summary>
     public int ChainId { get; init; } = 1;
 
-    public bool HasValidSmartContractAddress()
-    {
-        return !string.IsNullOrWhiteSpace(SmartContractAddress) &&
-               !string.Equals(SmartContractAddress, UnconfiguredSmartContractAddress, StringComparison.OrdinalIgnoreCase);
-    }
+    public PaymentMethodId GetPaymentMethodId() => new($"{Currency}-{Chain}".ToUpperInvariant());
+    public string GetSettingPrefix() => $"{Currency}_{Chain}".ToUpperInvariant();
 }

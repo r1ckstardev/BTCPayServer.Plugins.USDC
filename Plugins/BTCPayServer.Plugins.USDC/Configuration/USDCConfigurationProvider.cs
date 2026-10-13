@@ -41,7 +41,7 @@ public static class USDCConfigurationProvider
         var mainnet = network == ChainName.Mainnet;
         if (!mainnet && network != ChainName.Testnet && network != ChainName.Regtest)
             throw new NotSupportedException($"Unsupported network {network}");
-        return new(mainnet ? Constants.EthereumChainName : Constants.SepoliaChainName)
+        return new(mainnet ? "ETHEREUM" : "SEPOLIA")
         {
             Currency = "USDC",
             CurrencyDisplayName = "USDC",

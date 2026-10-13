@@ -56,10 +56,7 @@ public class EVMUSDCPaymentLinkExtension(PaymentMethodId paymentMethodId, USDCPl
         USDCPaymentLinkFormat format,
         string? template)
     {
-        if (string.IsNullOrEmpty(destination) ||
-            string.IsNullOrWhiteSpace(smartContractAddress) ||
-            string.Equals(smartContractAddress, EVMUSDCLikeConfigurationItem.UnconfiguredSmartContractAddress,
-                StringComparison.OrdinalIgnoreCase))
+        if (string.IsNullOrEmpty(destination))
             return null;
 
         var to = destination.ToLowerInvariant();

@@ -124,11 +124,11 @@ public class LocalForkTests(ITestOutputHelper output)
     }
 
     private sealed class ForkListener(EVMUSDCRPCProvider rpc, USDCPluginConfiguration config)
-        : EVMUSDCListener(null!, null!, rpc, config, null!, null!, NullLogger<EVMUSDCListener>.Instance, null!, null!)
+        : EVMUSDCListener(null!, rpc, config, null!, null!, NullLogger<EVMUSDCListener>.Instance)
     {
         public async Task<(BigInteger Amount, string Id)[]> Scan(PaymentMethodId pmi, BlockWithTransactions block, string destination)
         {
-            var matches = await GetTransfersAsync(pmi, block, new Dictionary<string, InvoiceEntity> { [destination] = null! }, CancellationToken.None);
+            var matches = await GetTransfersAsync(pmi, block, new HashSet<string> { destination }, CancellationToken.None);
             return matches.Select(m => (m.TotalAmount, m.TransactionId)).ToArray();
         }
     }

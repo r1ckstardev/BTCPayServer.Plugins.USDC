@@ -109,8 +109,8 @@ public class PaymentTests
         var pmi = new PaymentMethodId("USDC-SEPOLIA");
         var invoice = new InvoiceEntity { Id = "invoice", Currency = "USD", Price = 1, Status = InvoiceStatus.Expired, MonitoringExpiration = now.AddMinutes(1) };
         invoice.SetPaymentPrompt(pmi, new PaymentPrompt { Currency = "USDC", Destination = "0x1111111111111111111111111111111111111111", Divisibility = 6 });
-        Assert.True(USDCTrackedInvoiceProvider.ShouldTrack(invoice, pmi, now));
-        Assert.False(USDCTrackedInvoiceProvider.ShouldTrack(invoice, pmi, now.AddMinutes(1)));
-        Assert.False(USDCTrackedInvoiceProvider.ShouldTrack(invoice, new PaymentMethodId("USDT-SEPOLIA"), now));
+        Assert.True(USDCChainRecovery.ShouldTrack(invoice, pmi, now));
+        Assert.False(USDCChainRecovery.ShouldTrack(invoice, pmi, now.AddMinutes(1)));
+        Assert.False(USDCChainRecovery.ShouldTrack(invoice, new PaymentMethodId("USDT-SEPOLIA"), now));
     }
 }

@@ -1,14 +1,24 @@
 using System.Collections.Generic;
-using BTCPayServer.Payments;
+using System.Linq;
+using BTCPayServer.Abstractions.Contracts;
 
 namespace BTCPayServer.Plugins.USDC.Services;
 
-public class EVMUSDCSyncSummaryProvider(EVMUSDCRPCProvider rpcProvider) : USDCSyncSummaryProvider
+public class EVMUSDCSyncSummaryProvider(EVMUSDCRPCProvider rpcProvider) : ISyncSummaryProvider
 {
-    public override string Partial => "EVMUSDCLike/EVMUSDCSyncSummary";
+    public string Partial => "EVMUSDCLike/EVMUSDCSyncSummary";
 
-    protected override IEnumerable<KeyValuePair<PaymentMethodId, USDCRpcSummary>> GetSummaries()
+    public bool AllAvailable()
     {
-        return rpcProvider.Summaries;
+        return rpcProvider.Summaries.All(pair => pair.Value.RpcAvailable);
+    }
+
+    public IEnumerable<ISyncStatus> GetStatuses()
+    {
+        return rpcProvider.Summaries.Select(pair => new USDCSyncStatus
+        {
+            Summary = pair.Value,
+            PaymentMethodId = pair.Key.ToString()
+        });
     }
 }
