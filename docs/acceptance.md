@@ -1,10 +1,10 @@
-# Parity acceptance matrix
+# Ethereum USDC acceptance matrix
 
 This matrix identifies tests, not a claim that every gate has passed. Final evidence must name the exact commit and CI run. Open items block release readiness.
 
 | Feature | Evidence/test | Gate |
 | --- | --- | --- |
-| Four native networks, six decimals, rate and checkout links | PaymentTests | Automated |
+| Ethereum mainnet and Sepolia, six decimals, rate and checkout links; unsupported networks excluded | PaymentTests | Automated |
 | Settings validation, preserved fields, navigation, CSRF | BrowserConfigurationValidationPermissionsAndCheckout | Actual Chromium |
 | Authenticated address/balance API, scoped keys, unknown methods, store isolation | BrowserConfigurationValidationPermissionsAndCheckout | Actual host |
 | Concurrent reservations, retries, stores/process-shared lock, exhaustion | DatabaseTests, HostSmokeTests | PostgreSQL |
@@ -18,8 +18,7 @@ This matrix identifies tests, not a claim that every gate has passed. Final evid
 | Canonical contract transfers | LocalForkTests | Local Anvil only |
 | Official package, exact source/assembly and checksum | CI packer and host assembly comparison | CI artifact |
 | Package upload UI and restart | BrowserConfigurationValidationPermissionsAndCheckout; local pass | Actual Chromium/host |
-| Polygon indexing delay, Amoy end-to-end host lifecycle | AmoyHostLifecycleUsesPolygonConfirmationDelayAndIndependentState; local pass | Actual host |
-| Public Sepolia and Amoy checkout payments | Pending owner-controlled funded wallets | Required |
+| Public Sepolia checkout payment | Pending owner-controlled funded wallet | Required |
 | Plugin Builder registration/source access/build/publish permissions | Pending authenticated inspection | Required handoff |
 
 Final review must resolve any gaps found during test/implementation review. Unexpected skips, attribution/accounting/authentication/recovery defects block release readiness.

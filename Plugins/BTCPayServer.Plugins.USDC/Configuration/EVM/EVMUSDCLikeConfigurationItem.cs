@@ -19,13 +19,13 @@ public record EVMUSDCLikeConfigurationItem(string Chain) : USDCPluginConfigurati
 
     /// <summary>
     /// Average block time in seconds. Used to compute the sync lag threshold.
-    /// Ethereum mainnet ≈ 12s, Polygon PoS ≈ 2s.
+    /// Ethereum mainnet averages approximately 12 seconds.
     /// </summary>
     public double BlockTimeSeconds { get; init; } = 12.0;
 
     /// <summary>
     /// EIP-155 chain ID. Used in EIP-681 payment links so wallets select the correct network.
-    /// Ethereum mainnet = 1, Polygon = 137.
+    /// Ethereum mainnet = 1, Sepolia = 11155111.
     /// </summary>
     public int ChainId { get; init; } = 1;
 

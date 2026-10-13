@@ -63,7 +63,7 @@ internal sealed class LocalEvmNode : IAsyncDisposable
     {
         lock (_gate) _logs.Add(new JObject
         {
-            ["address"] = contract ?? (ChainId == 80002 ? USDCConfigurationProvider.AmoyContract : USDCConfigurationProvider.SepoliaContract),
+            ["address"] = contract ?? USDCConfigurationProvider.SepoliaContract,
             ["blockNumber"] = "0x" + height.ToString("x"), ["blockHash"] = HashAt(height),
             ["transactionHash"] = Hash(height + 100000), ["transactionIndex"] = "0x0",
             ["logIndex"] = "0x" + logIndex.ToString("x"), ["removed"] = false,

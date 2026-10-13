@@ -39,14 +39,11 @@ public class PaymentTests
     [InlineData("Mainnet", "USDC-ETHEREUM", 1, USDCConfigurationProvider.MainnetContract)]
     [InlineData("Testnet", "USDC-SEPOLIA", 11155111, USDCConfigurationProvider.SepoliaContract)]
     [InlineData("Regtest", "USDC-SEPOLIA", 11155111, USDCConfigurationProvider.SepoliaContract)]
-    [InlineData("Mainnet", "USDC-POLYGON", 137, USDCConfigurationProvider.PolygonContract)]
-    [InlineData("Testnet", "USDC-AMOY", 80002, USDCConfigurationProvider.AmoyContract)]
-    [InlineData("Regtest", "USDC-AMOY", 80002, USDCConfigurationProvider.AmoyContract)]
     public void NativeUsdcNetworksFollowHostNetwork(string network, string pmi, int chainId, string contract)
     {
         var configs = USDCConfigurationProvider.GetEVMUSDCLikeDefaultConfigurationItems(
             new NBXplorerNetworkProvider(new ChainName(network)), new ConfigurationBuilder().Build());
-        Assert.Equal(2, configs.Count);
+        Assert.Single(configs);
         var config = configs[new PaymentMethodId(pmi)];
         Assert.Equal(pmi, config.GetPaymentMethodId().ToString());
         Assert.Equal(chainId, config.ChainId);
@@ -55,6 +52,10 @@ public class PaymentTests
         Assert.Contains("USDC_BTC = USD_BTC", config.DefaultRateRules);
         Assert.StartsWith("USDC_", EVMUSDCRPCProvider.ListenerStateSettingKey(config));
         Assert.StartsWith("USDC_", USDCConfigurationProvider.ServerSettingsKey(config));
+        foreach (var unsupported in new[] { "USDC-POLYGON", "USDC-AMOY" })
+            Assert.Throws<NotSupportedException>(() => USDCConfigurationProvider.GetEVMUSDCDefaultConfigurationItem(
+                new PaymentMethodId(unsupported), new NBXplorerNetworkProvider(new ChainName(network)),
+                new ConfigurationBuilder().Build()));
     }
 
     [Theory]

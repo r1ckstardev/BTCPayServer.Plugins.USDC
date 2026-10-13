@@ -135,7 +135,7 @@ public partial class HostSmokeTests
         var path = $"/stores/{storeId}/evmUSDClike/USDC-SEPOLIA";
         await page.GotoAsync(path);
         await Assertions.Expect(page.Locator("h3").Filter(new() { HasText = "USDC on Sepolia" })).ToBeVisibleAsync();
-        await Assertions.Expect(page.Locator($"a[href='/stores/{storeId}/evmUSDClike/USDC-AMOY']")).ToBeVisibleAsync();
+        await Assertions.Expect(page.Locator($"a[href='/stores/{storeId}/evmUSDClike/USDC-AMOY']")).ToHaveCountAsync(0);
         // Validate server-rendered errors and preserve submitted invalid values.
         await page.Locator("#Address").FillAsync("bad-address");
         await page.GetByRole(AriaRole.Button, new() { Name = "Add address(es)", Exact = true }).ClickAsync();

@@ -28,7 +28,7 @@ public class LocalForkTests(ITestOutputHelper output)
         """;
 
     [LocalForkFact]
-    public async Task CanonicalContractsOnAllFourNetworksExecuteTransfersRecognizedByThePlugin()
+    public async Task CanonicalEthereumAndSepoliaContractsExecuteTransfersRecognizedByThePlugin()
     {
         var endpoint = new Uri(Environment.GetEnvironmentVariable("USDC_TEST_ANVIL_URL")!);
         Assert.True(endpoint.Scheme == "http" && endpoint.Host == "127.0.0.1",
@@ -57,10 +57,7 @@ public class LocalForkTests(ITestOutputHelper output)
         var networks = new[]
         {
             USDCConfigurationProvider.GetDefault(ChainName.Mainnet),
-            USDCConfigurationProvider.GetDefault(ChainName.Testnet) with { JsonRpcUri = new Uri("https://ethereum-sepolia-rpc.publicnode.com") },
-            USDCConfigurationProvider.GetPolygonDefault(ChainName.Mainnet),
-            // Forking needs recent historical storage as well as normal RPC reads.
-            USDCConfigurationProvider.GetPolygonDefault(ChainName.Testnet) with { JsonRpcUri = new Uri("https://polygon-amoy-bor-rpc.publicnode.com") }
+            USDCConfigurationProvider.GetDefault(ChainName.Testnet) with { JsonRpcUri = new Uri("https://ethereum-sepolia-rpc.publicnode.com") }
         };
         foreach (var network in networks)
         {

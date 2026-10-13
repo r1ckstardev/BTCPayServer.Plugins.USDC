@@ -3,7 +3,7 @@
     <TargetFramework>net10.0</TargetFramework>
     <Nullable>enable</Nullable>
     <Product>USDC</Product>
-    <Description>Accept native USDC on Ethereum and Polygon with BTCPay Server.</Description>
+    <Description>Accept native USDC payments on Ethereum directly to your own wallet with BTCPay Server.</Description>
     <Version>0.2.0</Version>
     <AddRazorSupportForMvc>true</AddRazorSupportForMvc>
     <PreserveCompilationContext>false</PreserveCompilationContext>

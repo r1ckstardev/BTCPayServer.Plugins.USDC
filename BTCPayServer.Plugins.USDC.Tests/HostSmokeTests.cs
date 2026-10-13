@@ -41,18 +41,14 @@ public partial class HostSmokeTests
     [DatabaseFact]
     public Task BrowserConfigurationValidationPermissionsAndCheckout() => RunLifecycle(false, browserCase: true);
 
-    [DatabaseFact]
-    public Task AmoyHostLifecycleUsesPolygonConfirmationDelayAndIndependentState() => RunLifecycle(false, amoyCase: true);
-
-    private async Task RunLifecycle(bool coInstall, bool recoveryCase = false, bool browserCase = false, bool amoyCase = false)
+    private async Task RunLifecycle(bool coInstall, bool recoveryCase = false, bool browserCase = false)
     {
         await using var node = new LocalEvmNode();
         await using var replacementNode = new LocalEvmNode();
         if (recoveryCase || browserCase) node.FinalityHeightOverride = 100;
-        var usdcMethodId = amoyCase ? "USDC-AMOY" : "USDC-SEPOLIA";
-        var chainId = amoyCase ? 80002 : 11155111;
+        const string usdcMethodId = "USDC-SEPOLIA";
+        const int chainId = 11155111;
         node.ChainId = replacementNode.ChainId = chainId;
-        var lagAdjustment = amoyCase ? 1 : 0;
         // A fresh database prevents previous runs' global scan cursors/settings influencing this chain.
         var database = "usdc_host_" + Guid.NewGuid().ToString("N");
         var connection = new NpgsqlConnectionStringBuilder(Environment.GetEnvironmentVariable("USDC_TEST_POSTGRES"));
@@ -84,7 +80,7 @@ public partial class HostSmokeTests
             ["datadir"] = data, ["plugindir"] = plugins,
             ["postgres"] = connection.ConnectionString,
             ["TEST_RUNNER_ENABLED"] = "true", ["disable-registration"] = "false",
-            [amoyCase ? "USDC_AMOY_JSONRPC_URI" : "USDC_SEPOLIA_JSONRPC_URI"] = node.Url,
+            ["USDC_SEPOLIA_JSONRPC_URI"] = node.Url,
             ["USDT_SEPOLIA_JSONRPC_URI"] = node.Url
         };
         IHost BuildHost() => Host.CreateDefaultBuilder()
@@ -126,7 +122,7 @@ public partial class HostSmokeTests
             var secondDestination = "0x" + Guid.NewGuid().ToString("N") + "22222222";
             var lateDestination = "0x" + Guid.NewGuid().ToString("N") + "33333333";
             var switchedDestination = "0x" + Guid.NewGuid().ToString("N") + "44444444";
-            foreach (var invalid in new[] { "not-an-address", "0x0000000000000000000000000000000000000000", (amoyCase ? Configuration.USDCConfigurationProvider.AmoyContract : Configuration.USDCConfigurationProvider.SepoliaContract) })
+            foreach (var invalid in new[] { "not-an-address", "0x0000000000000000000000000000000000000000", Configuration.USDCConfigurationProvider.SepoliaContract })
                 await Assert.ThrowsAsync<GreenfieldValidationException>(() => api.UpdateStorePaymentMethod(store.Id, usdcMethodId,
                     new UpdatePaymentMethodRequest { Enabled = true, Config = new JObject { ["addresses"] = new JArray(invalid) } }));
             await api.UpdateStorePaymentMethod(store.Id, usdcMethodId, new UpdatePaymentMethodRequest
@@ -239,7 +235,7 @@ public partial class HostSmokeTests
             node.SetTimestamp(101, DateTimeOffset.UtcNow.AddDays(-1));
             node.Transfer(101, destination, 5000000); // An old deposit cannot pay this invoice.
             node.Transfer(102, destination, 400000);
-            node.FinalizedHeight = 103 + lagAdjustment;
+            node.FinalizedHeight = 103;
             await Eventually(async () => (await api.GetInvoicePaymentMethods(invoice.Id)).Single().TotalPaid == 0.4m);
             Assert.Equal(InvoiceStatus.New, (await api.GetInvoice(invoice.Id)).Status);
             // Stop completely, then resume from the persisted cursor with an unavailable RPC.
@@ -254,10 +250,10 @@ public partial class HostSmokeTests
             node.Transfer(103, secondDestination, 500000, 2);
             node.Transfer(103, secondDestination, 500000, 2); // Duplicate RPC log must not double-credit.
             if (coInstall) node.Transfer(103, destination, 1000000, 3, usdtContract);
-            node.FinalizedHeight = 104 + lagAdjustment;
+            node.FinalizedHeight = 104;
             node.FailRequests = false;
             await Eventually(async () => (await api.GetInvoice(invoice.Id)).Status == InvoiceStatus.Processing);
-            node.FinalizedHeight = 107 + lagAdjustment;
+            node.FinalizedHeight = 107;
             await Eventually(async () => (await api.GetInvoice(invoice.Id)).Status == InvoiceStatus.Settled);
             method = Assert.Single(await api.GetInvoicePaymentMethods(invoice.Id));
             Assert.Equal(1m, method.TotalPaid);
@@ -304,7 +300,7 @@ public partial class HostSmokeTests
             {
                 ["Email"] = email, ["Password"] = password, ["Method"] = "Password"
             });
-            replacementNode.FinalizedHeight = 107 + lagAdjustment;
+            replacementNode.FinalizedHeight = 107;
             // The old provider has the next block; the replacement is still behind. Switch while
             // that block request is in flight to prove the cursor cannot skip its payment.
             if (!coInstall)
@@ -312,7 +308,7 @@ public partial class HostSmokeTests
                 replacementNode.ObserveEmptyLogsHeight = 108;
                 node.PauseBlockHeight = 108;
                 node.Transfer(108, switchedDestination, 1000000);
-                node.FinalizedHeight = 109 + lagAdjustment;
+                node.FinalizedHeight = 109;
                 await node.BlockRequestPaused.Task.WaitAsync(TimeSpan.FromSeconds(30));
             }
             try
@@ -326,7 +322,7 @@ public partial class HostSmokeTests
             Assert.Equal(replacementNode.Url, activeConfiguration.EVMUSDCLikeConfigurationItems[pmi].JsonRpcUri.AbsoluteUri);
             // The old endpoint stays healthy. Detection must switch without a restart/error.
             replacementNode.Transfer(108, switchedDestination, 1000000);
-            replacementNode.FinalizedHeight = 112 + lagAdjustment;
+            replacementNode.FinalizedHeight = 112;
             await Eventually(async () => (await api.GetInvoice(switchedInvoice.Id)).Status == InvoiceStatus.Settled);
 
             // Rebuild the entire host, including tracking caches, against its existing database.
@@ -338,7 +334,7 @@ public partial class HostSmokeTests
             api = new BTCPayServerClient(new Uri(address), email, password);
             Assert.Equal(1m, (await api.GetInvoicePaymentMethods(invoice.Id)).Single().TotalPaid);
             replacementNode.Transfer(113, lateDestination, 1000000);
-            replacementNode.FinalizedHeight = 117 + lagAdjustment;
+            replacementNode.FinalizedHeight = 117;
             await Eventually(async () => (await api.GetInvoice(lateInvoice.Id)).AdditionalStatus == InvoiceExceptionStatus.PaidLate);
             var late = (await api.GetInvoicePaymentMethods(lateInvoice.Id)).Single();
             Assert.Equal(1m, late.TotalPaid);

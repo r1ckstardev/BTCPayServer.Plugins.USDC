@@ -32,7 +32,7 @@ public class ReservationLifecycleTests
     {
         var factory = DatabaseTests.Factory();
         await using (var context = factory.CreateContext()) await context.Database.MigrateAsync();
-        var pmi = new PaymentMethodId("USDC-AMOY");
+        var pmi = new PaymentMethodId("USDC-SEPOLIA");
         var storeId = Guid.NewGuid().ToString("N");
         var invoiceId = Guid.NewGuid().ToString("N");
         var address = "0x" + Guid.NewGuid().ToString("N") + "abcdefab";
