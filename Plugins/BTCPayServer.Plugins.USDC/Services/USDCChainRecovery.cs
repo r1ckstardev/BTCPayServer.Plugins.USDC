@@ -46,30 +46,31 @@ public sealed class USDCChainRecovery(
 
     private static string Prefix(PaymentMethodId pmi) => $"USDC.Transfer.v2.{pmi}.";
 
+    // Monitoring windows are checked at the block's time, not the indexer's, so a
+    // catch-up after an outage still credits transfers made inside the window.
     public async Task<InvoiceEntity?> ResolveCurrentInvoice(PaymentMethodId pmi, string address, DateTimeOffset timestamp)
     {
         var claim = await reservations.CurrentClaim(pmi, address);
         if (claim is null) return null;
         var invoice = await invoices.GetInvoice(claim.InvoiceId);
-        return invoice is not null && ShouldTrack(invoice, pmi, DateTimeOffset.UtcNow) &&
+        return invoice is not null && ShouldTrack(invoice, pmi, timestamp) &&
                timestamp.ToUnixTimeSeconds() >= invoice.InvoiceTime.ToUnixTimeSeconds() ? invoice : null;
     }
 
     // Durable address claims decide what to watch. They survive restarts and
     // long outages, so no invoice cache or history bootstrap is needed.
-    public async Task<HashSet<string>> WatchedAddresses(PaymentMethodId pmi, CancellationToken cancellationToken)
+    public async Task<HashSet<string>> WatchedAddresses(PaymentMethodId pmi, DateTimeOffset timestamp, CancellationToken cancellationToken)
     {
         var watched = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var claims = await reservations.CurrentClaims(pmi);
         if (claims.Length == 0) return watched;
-        var now = DateTimeOffset.UtcNow;
         var claimed = await invoices.GetInvoices(new InvoiceQuery
         {
             InvoiceId = claims.Select(c => c.InvoiceId).Distinct().ToArray(),
             IncludeArchived = true
         }, cancellationToken);
         foreach (var invoice in claimed)
-            if (ShouldTrack(invoice, pmi, now) && invoice.GetPaymentPrompt(pmi)!.Activated)
+            if (ShouldTrack(invoice, pmi, timestamp) && invoice.GetPaymentPrompt(pmi)!.Activated)
                 watched.Add(invoice.GetPaymentPrompt(pmi)!.Destination);
         return watched;
     }
@@ -123,8 +124,15 @@ public sealed class USDCChainRecovery(
 
     public async Task Reconcile(PaymentMethodId pmi, Observation observation, long indexedHeight)
     {
-        var invoice = await invoices.GetInvoice(observation.InvoiceId)
-            ?? throw new InvalidOperationException($"USDC observation {observation.Id} refers to missing invoice {observation.InvoiceId}.");
+        var invoice = await invoices.GetInvoice(observation.InvoiceId);
+        if (invoice is null)
+        {
+            // Deleting a store deletes its invoices. Retire the observation so it
+            // cannot stall indexing for every other store on this chain.
+            observation.Finalized = true;
+            await Save(pmi, observation);
+            return;
+        }
         var handler = handlers[pmi];
         var payment = invoice.GetPayments(false).SingleOrDefault(p => p.PaymentMethodId == pmi && p.Id == observation.Id);
         var details = new EVMUSDCPaymentData

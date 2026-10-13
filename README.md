@@ -95,7 +95,7 @@ A history conflict at the finalized checkpoint halts that chain and displays a d
 
 Back up the complete BTCPay database, configuration and plugin directory together. Reservation/assignment records (`USDC.Address.*`, `USDC.InvoiceAddress.*`), transfer journals (`USDC.Transfer.v2.*`) and listener settings are part of the database. Never delete these to make an address available. Restoring an old database while continuing to accept payments risks losing assignments and observations.
 
-If an outage outlasts an invoice's monitoring deadline, reconcile transfers that were never observed before the deadline manually. There is no pre-activation historical backfill. Native chain finality and the provider's data remain trust assumptions.
+Monitoring deadlines are checked against each block's timestamp, so catching up after an outage still credits transfers made before an invoice's deadline. Payments to a deleted store's invoices are retired instead of blocking the chain. There is no pre-activation historical backfill. Native chain finality and the provider's data remain trust assumptions.
 
 ## API
 

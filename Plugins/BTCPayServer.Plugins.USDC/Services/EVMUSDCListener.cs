@@ -178,11 +178,11 @@ public class EVMUSDCListener(
         var next = await GetBlock(client, cursor + 1);
         if (!USDCChainRecovery.Same(next.ParentHash, state.Blocks[cursor].Hash))
             throw new InvalidOperationException("RPC ancestry changed during indexing; replay required.");
-        var watched = await recovery.WatchedAddresses(pmi, token);
-        watched.UnionWith(outstanding.Select(o => o.To.ToLowerInvariant()));
-        var matches = watched.Count == 0 ? [] : await GetTransfersAsync(pmi, next, watched, token);
         if (!TryGetBlockTimestamp(next.Timestamp, out var timestamp))
             throw new InvalidOperationException($"Block {next.Number} has an invalid timestamp.");
+        var watched = await recovery.WatchedAddresses(pmi, timestamp, token);
+        watched.UnionWith(outstanding.Select(o => o.To));
+        var matches = watched.Count == 0 ? [] : await GetTransfersAsync(pmi, next, watched, token);
         foreach (var match in matches)
         {
             var observation = await recovery.Find(pmi, match.TransactionId);
