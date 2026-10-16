@@ -6,7 +6,7 @@ Accept native USDC payments on Ethereum directly to your own wallet. This plugin
 
 The plugin monitors payments. It does not generate wallets, exchange tokens, sweep funds, issue refunds, or send payouts. Sepolia is available for testing the Ethereum payment flow.
 
-**Current status:** version 0.0.3 groups wallet navigation under a clickable USDC parent with network status and an expandable ETHEREUM entry. It also uses uppercase network names in the server menu. It remains an unlisted prerelease on Plugin Builder while public-network payment acceptance is pending. See [acceptance evidence](docs/acceptance.md).
+**Current status:** version 0.0.4 opens ETHEREUM directly when you click USDC. The network submenu follows the active page, with no expander, and store Settings stays closed on USDC pages. The parent status light remains visible on every page. It remains an unlisted prerelease on Plugin Builder while public-network payment acceptance is pending. See [acceptance evidence](docs/acceptance.md).
 
 ## Plugin Builder listing
 
@@ -19,7 +19,7 @@ Copy these values into the Plugin Builder registration and settings forms. The d
 | Plugin description | Accept native USDC payments on Ethereum directly to your own wallet. This plugin adds USDC to BTCPay Server invoices and checkout, detects incoming transfers, and tracks confirmations and settlement. It supports partial payments, overpayments, and reusable receiving addresses. Wallet keys stay with you; no exchange account or USDt plugin is required. |
 | Logo | Upload [docs/assets/usdc.png](docs/assets/usdc.png), the unmodified USDC token logo from Circle's brand kit. |
 | Git repository | `https://github.com/rockstardev/BTCPayServer.Plugins.USDC` |
-| Git branch or tag | The release tag, `v0.0.3`. |
+| Git branch or tag | The release tag, `v0.0.4`. |
 | Directory to the plugin's project | `Plugins/BTCPayServer.Plugins.USDC` |
 | Dotnet build configuration | `Release` |
 | Documentation link | `https://github.com/rockstardev/BTCPayServer.Plugins.USDC/blob/master/README.md` |
