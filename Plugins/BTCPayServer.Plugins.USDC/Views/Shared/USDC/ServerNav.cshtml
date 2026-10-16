@@ -8,6 +8,6 @@
 {
     <li permission="@Policies.CanModifyServerSettings">
         <a class="dropdown-item @ViewData.ActivePageClass(USDCPlugin.PluginNavKey, typeof(ServerNavPages).ToString(), $"EVM-{config.GetPaymentMethodId()}")" asp-controller="UIEVMUSDCLikeServer" asp-action="GetServerConfig"
-           asp-route-paymentMethodId="@config.GetPaymentMethodId()">@config.DisplayName</a>
+           asp-route-paymentMethodId="@config.GetPaymentMethodId()">USDC on @config.Chain</a>
     </li>
 }

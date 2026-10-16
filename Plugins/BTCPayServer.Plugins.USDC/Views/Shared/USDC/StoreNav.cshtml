@@ -13,18 +13,40 @@
 @{
     var store = Context.GetStoreData();
     var excluded = store?.GetStoreBlob().GetExcludedPaymentMethods();
+    var networks = Configuration.EVMUSDCLikeConfigurationItems.Values.Select(config =>
+    {
+        var pmi = config.GetPaymentMethodId();
+        var enabled = store?.GetPaymentMethodConfig<EVMUSDCPaymentMethodConfig>(pmi, Handlers) is not null && excluded?.Match(pmi) is false;
+        return new { Config = config, PaymentMethodId = pmi, Enabled = enabled, Available = RpcProvider.IsAvailable(pmi) };
+    }).ToArray();
+    var parentStatus = !networks.Any(network => network.Enabled) ? "pending"
+        : networks.Any(network => network.Enabled && !network.Available) ? "disabled" : "enabled";
+    var walletPage = string.Equals(Context.Request.RouteValues["controller"]?.ToString(), "UIEVMUSDCLikeStore", StringComparison.OrdinalIgnoreCase);
+    var activeMethod = Context.Request.RouteValues["paymentMethodId"]?.ToString();
+    var expanded = walletPage && networks.Any(network => network.PaymentMethodId.ToString() == activeMethod);
 }
-@foreach (var config in Configuration.EVMUSDCLikeConfigurationItems.Values)
+@if (networks.Length > 0)
 {
-    var pmi = config.GetPaymentMethodId();
-    var enabled = store?.GetPaymentMethodConfig<EVMUSDCPaymentMethodConfig>(pmi, Handlers) is not null && excluded?.Match(pmi) is false;
-    var status = !enabled ? "pending" : RpcProvider.IsAvailable(pmi) ? "enabled" : "disabled";
-    var active = Context.Request.RouteValues["paymentMethodId"]?.ToString() == pmi.ToString();
     <li class="nav-item">
-        <a class="nav-link @(active ? "active" : "")" asp-controller="UIEVMUSDCLikeStore" asp-action="GetStoreEVMUSDCLikePaymentMethod"
-           asp-route-storeId="@ScopeProvider.GetCurrentStoreId()" asp-route-paymentMethodId="@pmi">
-            <span class="me-2 btcpay-status btcpay-status--@status"></span>
-            <span>@(config.Chain == "ETHEREUM" ? "USDC on ETH" : config.DisplayName)</span>
+        <a id="Nav-USDC-Toggle" class="nav-link w-100 @(expanded ? "" : "collapsed")" href="#Nav-USDC-Networks"
+           role="button" data-bs-toggle="collapse" aria-expanded="@(expanded ? "true" : "false")" aria-controls="Nav-USDC-Networks">
+            <span class="me-2 btcpay-status btcpay-status--@parentStatus"></span>
+            <span>USDC</span>
+            <vc:icon symbol="caret-down" />
         </a>
+        <ul id="Nav-USDC-Networks" class="navbar-nav collapse @(expanded ? "show" : "")">
+            @foreach (var network in networks)
+            {
+                var active = walletPage && network.PaymentMethodId.ToString() == activeMethod;
+                var status = !network.Enabled ? "pending" : network.Available ? "enabled" : "disabled";
+                <li class="nav-item nav-item-sub">
+                    <a class="nav-link @(active ? "active" : "")" asp-controller="UIEVMUSDCLikeStore" asp-action="GetStoreEVMUSDCLikePaymentMethod"
+                       asp-route-storeId="@ScopeProvider.GetCurrentStoreId()" asp-route-paymentMethodId="@network.PaymentMethodId">
+                        <span class="me-2 btcpay-status btcpay-status--@status"></span>
+                        <span>@network.Config.Chain</span>
+                    </a>
+                </li>
+            }
+        </ul>
     </li>
 }
