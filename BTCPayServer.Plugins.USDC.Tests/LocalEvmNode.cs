@@ -20,6 +20,7 @@ internal sealed class LocalEvmNode : IAsyncDisposable
     public int FinalizedHeight { get; set; } = 100; // Existing fixtures use this as latest head too.
     public int? FinalityHeightOverride { get; set; }
     public int ChainId { get; set; } = 11155111;
+    public string TokenContract { get; set; } = USDCConfigurationProvider.SepoliaContract;
     private readonly Dictionary<int, int> _forks = [];
     private string HashAt(int height) { lock (_gate) return Hash(height + (_forks.Where(f => height >= f.Key).OrderByDescending(f => f.Key).FirstOrDefault().Value * 1000000)); }
     public void ForkFrom(int height, int branch) { lock (_gate) _forks[height] = branch; }
@@ -63,7 +64,7 @@ internal sealed class LocalEvmNode : IAsyncDisposable
     {
         lock (_gate) _logs.Add(new JObject
         {
-            ["address"] = contract ?? USDCConfigurationProvider.SepoliaContract,
+            ["address"] = contract ?? TokenContract,
             ["blockNumber"] = "0x" + height.ToString("x"), ["blockHash"] = HashAt(height),
             ["transactionHash"] = Hash(height + 100000), ["transactionIndex"] = "0x0",
             ["logIndex"] = "0x" + logIndex.ToString("x"), ["removed"] = false,

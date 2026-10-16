@@ -35,20 +35,33 @@ public partial class HostSmokeTests
     [CoInstallFact]
     public Task PublishedPluginWorksAlongsideUSDt() => RunLifecycle(true);
 
+    [CoInstallFact]
+    public Task PublishedPluginWorksAlongsideUSDtOnMainnet() => RunLifecycle(true, mainnet: true);
+
+    [CoInstallFact]
+    public Task BrowserConfigurationAndCheckoutWorkAlongsideUSDt() => RunLifecycle(true, browserCase: true);
+
+    [DatabaseFact]
+    public Task ShutdownDeadlineDuringRpcRequestDoesNotReportPluginCrash() => RunLifecycle(false, shutdownCase: true);
+
     [DatabaseFact]
     public Task ReorganizationRetainsInvoiceAssociationAfterAddressReuseAndHaltsOnFinalityConflict() => RunLifecycle(false, recoveryCase: true);
 
     [DatabaseFact]
     public Task BrowserConfigurationValidationPermissionsAndCheckout() => RunLifecycle(false, browserCase: true);
 
-    private async Task RunLifecycle(bool coInstall, bool recoveryCase = false, bool browserCase = false)
+    private async Task RunLifecycle(bool coInstall, bool recoveryCase = false, bool browserCase = false, bool mainnet = false, bool shutdownCase = false)
     {
         await using var node = new LocalEvmNode();
         await using var replacementNode = new LocalEvmNode();
         if (recoveryCase || browserCase) node.FinalityHeightOverride = 100;
-        const string usdcMethodId = "USDC-SEPOLIA";
-        const int chainId = 11155111;
+        var usdcMethodId = mainnet ? "USDC-ETHEREUM" : "USDC-SEPOLIA";
+        var usdtMethodId = mainnet ? "USDT-ETHEREUM" : "USDT-SEPOLIA";
+        var chainId = mainnet ? 1 : 11155111;
         node.ChainId = replacementNode.ChainId = chainId;
+        node.TokenContract = replacementNode.TokenContract = mainnet
+            ? Configuration.USDCConfigurationProvider.MainnetContract
+            : Configuration.USDCConfigurationProvider.SepoliaContract;
         // A fresh database prevents previous runs' global scan cursors/settings influencing this chain.
         var database = "usdc_host_" + Guid.NewGuid().ToString("N");
         var connection = new NpgsqlConnectionStringBuilder(Environment.GetEnvironmentVariable("USDC_TEST_POSTGRES"));
@@ -76,12 +89,14 @@ public partial class HostSmokeTests
         }
         var config = new Dictionary<string, string?>
         {
-            ["network"] = "regtest", ["chains"] = "none", ["nodefaultchain"] = "true",
+            ["network"] = mainnet ? "mainnet" : "regtest", ["chains"] = "none", ["nodefaultchain"] = "true",
             ["datadir"] = data, ["plugindir"] = plugins,
             ["postgres"] = connection.ConnectionString,
             ["TEST_RUNNER_ENABLED"] = "true", ["disable-registration"] = "false",
             ["USDC_SEPOLIA_JSONRPC_URI"] = node.Url,
-            ["USDT_SEPOLIA_JSONRPC_URI"] = node.Url
+            ["USDT_SEPOLIA_JSONRPC_URI"] = node.Url,
+            ["USDC_ETHEREUM_JSONRPC_URI"] = node.Url,
+            ["USDT_ETHEREUM_JSONRPC_URI"] = node.Url
         };
         IHost BuildHost() => Host.CreateDefaultBuilder()
             .UseEnvironment("Development")
@@ -96,7 +111,7 @@ public partial class HostSmokeTests
         {
             var handlers = host.Services.GetRequiredService<PaymentMethodHandlerDictionary>();
             Assert.True(handlers.TryGetValue(new PaymentMethodId(usdcMethodId), out _));
-            Assert.Equal(coInstall, handlers.TryGetValue(new PaymentMethodId("USDT-SEPOLIA"), out _));
+            Assert.Equal(coInstall, handlers.TryGetValue(new PaymentMethodId(usdtMethodId), out _));
             var address = host.Services.GetRequiredService<IServer>().Features.Get<IServerAddressesFeature>()!.Addresses.Single();
             using var client = new HttpClient { BaseAddress = new Uri(address) };
             var response = await client.GetAsync("/");
@@ -122,22 +137,22 @@ public partial class HostSmokeTests
             var secondDestination = "0x" + Guid.NewGuid().ToString("N") + "22222222";
             var lateDestination = "0x" + Guid.NewGuid().ToString("N") + "33333333";
             var switchedDestination = "0x" + Guid.NewGuid().ToString("N") + "44444444";
-            foreach (var invalid in new[] { "not-an-address", "0x0000000000000000000000000000000000000000", Configuration.USDCConfigurationProvider.SepoliaContract })
+            foreach (var invalid in new[] { "not-an-address", "0x0000000000000000000000000000000000000000", node.TokenContract })
                 await Assert.ThrowsAsync<GreenfieldValidationException>(() => api.UpdateStorePaymentMethod(store.Id, usdcMethodId,
                     new UpdatePaymentMethodRequest { Enabled = true, Config = new JObject { ["addresses"] = new JArray(invalid) } }));
             await api.UpdateStorePaymentMethod(store.Id, usdcMethodId, new UpdatePaymentMethodRequest
             {
                 Enabled = true, Config = new JObject { ["addresses"] = new JArray(destination, secondDestination, lateDestination, switchedDestination) }
             });
-            const string usdtContract = "0xf02d1af3c9ec13f4e9e986f2de75da96d75a57b0";
+            var usdtContract = mainnet ? "0xdac17f958d2ee523a2206206994597c13d831ec7" : "0xf02d1af3c9ec13f4e9e986f2de75da96d75a57b0";
             BTCPayServer.Client.Models.InvoiceData? usdtInvoice = null;
             if (coInstall)
             {
-                await api.UpdateStorePaymentMethod(store.Id, "USDT-SEPOLIA", new UpdatePaymentMethodRequest
+                await api.UpdateStorePaymentMethod(store.Id, usdtMethodId, new UpdatePaymentMethodRequest
                 {
                     Enabled = true, Config = new JObject { ["addresses"] = new JArray(destination) }
                 });
-                var usdtPmi = new PaymentMethodId("USDT-SEPOLIA");
+                var usdtPmi = new PaymentMethodId(usdtMethodId);
                 // Resolve readiness from the dynamically installed assembly without a USDt project dependency.
                 var rpcType = handlers[usdtPmi].GetType().Assembly.GetType("BTCPayServer.Plugins.USDt.Services.EVMUSDtRPCProvider")!;
                 dynamic usdtRpc = host.Services.GetRequiredService(rpcType);
@@ -147,7 +162,7 @@ public partial class HostSmokeTests
                     Currency = "USDT", Amount = 1m,
                     Checkout = new InvoiceDataBase.CheckoutOptions
                     {
-                        PaymentMethods = ["USDT-SEPOLIA"], LazyPaymentMethods = false,
+                        PaymentMethods = [usdtMethodId], LazyPaymentMethods = false,
                         SpeedPolicy = SpeedPolicy.HighSpeed, Expiration = TimeSpan.FromHours(1)
                     }
                 });
@@ -161,6 +176,25 @@ public partial class HostSmokeTests
             var rpc = host.Services.GetRequiredService<EVMUSDCRPCProvider>();
             var pmi = new PaymentMethodId(usdcMethodId);
             await Eventually(async () => { await rpc.UpdateSummary(pmi); return rpc.IsAvailable(pmi); });
+            if (shutdownCase)
+            {
+                var shutdownListener = host.Services.GetServices<IHostedService>().OfType<EVMUSDCListener>().Single();
+                node.PauseBlockHeight = 101;
+                node.FinalizedHeight = 102;
+                await node.BlockRequestPaused.Task.WaitAsync(TimeSpan.FromSeconds(30));
+                using var deadline = new CancellationTokenSource();
+                deadline.Cancel();
+                try
+                {
+                    await shutdownListener.StopAsync(deadline.Token).WaitAsync(TimeSpan.FromSeconds(5));
+                }
+                finally
+                {
+                    node.ResumeBlockRequest.TrySetResult();
+                    await shutdownListener.StopAsync(CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(30));
+                }
+                return;
+            }
             if (browserCase)
             {
                 await RunBrowserParity(host, address, email, password, api, store.Id, node);
@@ -169,6 +203,7 @@ public partial class HostSmokeTests
                 host = BuildHost();
                 await host.StartWithTasksAsync().WaitAsync(TimeSpan.FromSeconds(90));
                 Assert.True(host.Services.GetRequiredService<PaymentMethodHandlerDictionary>().TryGetValue(new PaymentMethodId(usdcMethodId), out _));
+                Assert.Equal(coInstall, host.Services.GetRequiredService<PaymentMethodHandlerDictionary>().TryGetValue(new PaymentMethodId(usdtMethodId), out _));
                 Assert.Equal(System.Security.Cryptography.SHA256.HashData(File.ReadAllBytes(typeof(USDCPlugin).Assembly.Location)),
                     System.Security.Cryptography.SHA256.HashData(File.ReadAllBytes(Path.Combine(plugin, "BTCPayServer.Plugins.USDC.dll"))));
                 return;
