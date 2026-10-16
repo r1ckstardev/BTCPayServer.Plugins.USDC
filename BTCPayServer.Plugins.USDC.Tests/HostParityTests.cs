@@ -139,12 +139,12 @@ public partial class HostSmokeTests
         await page.GotoAsync(path);
         await Assertions.Expect(page.Locator("h3").Filter(new() { HasText = displayName })).ToBeVisibleAsync();
         await Assertions.Expect(page.Locator($"a[href='/stores/{storeId}/evmUSDClike/USDC-AMOY']")).ToHaveCountAsync(0);
-        var wallet = page.Locator($"#Nav-Wallets a[href='{path}']");
+        var wallet = page.Locator($"#Nav-USDC-Networks a[href='{path}']");
         await Assertions.Expect(wallet).ToHaveCountAsync(1);
         await Assertions.Expect(wallet).ToHaveTextAsync(chain);
         await Assertions.Expect(wallet.Locator(".btcpay-status--enabled")).ToHaveCountAsync(1);
         await Assertions.Expect(wallet.Locator("..")).ToHaveClassAsync(new System.Text.RegularExpressions.Regex("nav-item-sub"));
-        var parent = page.Locator("#Nav-USDC-Toggle");
+        var parent = page.Locator("#Nav-USDC");
         await Assertions.Expect(parent.Locator(".btcpay-status--enabled")).ToHaveCountAsync(1);
         await AssertWalletNavigation(page, storeId, path, chain, screenshots);
         await AssertServerMenuHover(page, screenshots);
@@ -177,7 +177,7 @@ public partial class HostSmokeTests
         await Assertions.Expect(wallet.Locator(".btcpay-status--pending")).ToHaveCountAsync(1);
         await page.GotoAsync($"/stores/{storeId}/settings");
         await Assertions.Expect(parent.Locator(".btcpay-status--pending")).ToHaveCountAsync(1);
-        await Assertions.Expect(parent).ToHaveAttributeAsync("aria-expanded", "false");
+        await Assertions.Expect(page.Locator("#Nav-USDC-Networks")).ToHaveCountAsync(0);
         await page.GotoAsync(path);
         await Assertions.Expect(page.Locator("#PaymentLinkFormat")).ToHaveValueAsync("3");
         await Assertions.Expect(page.Locator("#PaymentLinkTemplate")).ToHaveValueAsync(template);
@@ -290,40 +290,45 @@ public partial class HostSmokeTests
     {
         var viewport = page.ViewportSize!;
         await page.SetViewportSizeAsync(1280, 1000);
-        var toggle = page.Locator("#Nav-USDC-Toggle");
+        var parent = page.Locator("#Nav-USDC");
         var networks = page.Locator("#Nav-USDC-Networks");
         var network = networks.Locator($"a[href='{path}']");
-        var open = new System.Text.RegularExpressions.Regex("(^| )show( |$)");
-        await Assertions.Expect(toggle).ToHaveAttributeAsync("aria-expanded", "true");
-        await Assertions.Expect(networks).ToHaveClassAsync(open);
+        var active = new System.Text.RegularExpressions.Regex("(^| )active( |$)");
+        var settingsChild = page.Locator($"#mainNav a[href='/stores/{storeId}/rates']");
+        await Assertions.Expect(settingsChild).ToHaveCountAsync(0);
+        await Assertions.Expect(parent).ToHaveClassAsync(active);
+        await Assertions.Expect(parent).ToHaveAttributeAsync("href", path);
+        await Assertions.Expect(parent.Locator("[data-bs-toggle], svg")).ToHaveCountAsync(0);
+        Assert.Null(await parent.GetAttributeAsync("data-bs-toggle"));
+        await Assertions.Expect(networks).ToBeVisibleAsync();
         await Assertions.Expect(network).ToHaveClassAsync(new System.Text.RegularExpressions.Regex("active"));
 
-        // USDC also supports already-released USDt versions. Check the paired
-        // navigation when the reference package supplies the new toggle.
-        var usdtToggle = page.Locator("#Nav-USDt-Toggle");
-        var pairedNavigation = await usdtToggle.CountAsync() == 1;
+        // Keep compatibility with released USDt packages while exercising the
+        // matching navigation when the reference package includes it.
+        var usdtParent = page.Locator("#Nav-USDt");
+        var pairedNavigation = await usdtParent.CountAsync() == 1;
         var suffix = pairedNavigation ? "usdc-usdt" : "usdc";
         await page.GotoAsync($"/stores/{storeId}/settings");
-        await Assertions.Expect(toggle).ToHaveAttributeAsync("aria-expanded", "false");
-        await Assertions.Expect(networks).Not.ToBeVisibleAsync();
-        await Assertions.Expect(toggle.Locator(".btcpay-status--enabled")).ToHaveCountAsync(1);
+        await Assertions.Expect(settingsChild).ToBeVisibleAsync();
+        await Assertions.Expect(networks).ToHaveCountAsync(0);
+        await Assertions.Expect(parent).Not.ToHaveClassAsync(active);
+        await Assertions.Expect(parent.Locator(".btcpay-status--enabled")).ToHaveCountAsync(1);
         if (pairedNavigation)
         {
-            await Assertions.Expect(usdtToggle).ToHaveAttributeAsync("aria-expanded", "false");
-            await Assertions.Expect(usdtToggle.Locator(".btcpay-status--enabled")).ToHaveCountAsync(1);
+            await Assertions.Expect(page.Locator("#Nav-USDt-Networks")).ToHaveCountAsync(0);
+            await Assertions.Expect(usdtParent.Locator(".btcpay-status--enabled")).ToHaveCountAsync(1);
         }
         await page.ScreenshotAsync(new() { Path = Path.Combine(screenshots, $"wallet-navigation-collapsed-{suffix}.png") });
-        await toggle.ClickAsync();
-        await Assertions.Expect(networks).ToHaveClassAsync(open);
+        await parent.ClickAsync();
+        await Assertions.Expect(page).ToHaveURLAsync(new System.Text.RegularExpressions.Regex(System.Text.RegularExpressions.Regex.Escape(path) + "$"));
+        await Assertions.Expect(settingsChild).ToHaveCountAsync(0);
         await Assertions.Expect(network).ToBeVisibleAsync();
         await page.ScreenshotAsync(new() { Path = Path.Combine(screenshots, $"wallet-navigation-expanded-{suffix}.png") });
-        await toggle.PressAsync("Enter");
-        await Assertions.Expect(networks).Not.ToBeVisibleAsync();
-        await toggle.PressAsync("Enter");
-        await Assertions.Expect(networks).ToHaveClassAsync(open);
-        await network.ClickAsync();
+        // Activating the parent again navigates; it never toggles the submenu.
+        await parent.PressAsync("Enter");
         await Assertions.Expect(page).ToHaveURLAsync(new System.Text.RegularExpressions.Regex(System.Text.RegularExpressions.Regex.Escape(path) + "$"));
-        await Assertions.Expect(toggle).ToHaveAttributeAsync("aria-expanded", "true");
+        await Assertions.Expect(network).ToBeVisibleAsync();
+        await Assertions.Expect(parent).ToHaveClassAsync(active);
 
         if (pairedNavigation)
         {
@@ -331,16 +336,33 @@ public partial class HostSmokeTests
             var usdtPath = $"/stores/{storeId}/evmUSDtlike/USDT-{chain}";
             var usdtNetwork = usdtNetworks.Locator($"a[href='{usdtPath}']");
             await Assertions.Expect(usdtNetworks).Not.ToBeVisibleAsync();
-            await usdtToggle.ClickAsync();
-            await Assertions.Expect(usdtNetworks).ToHaveClassAsync(open);
+            // ETHEREUM is enabled and TRON is disabled in this fixture, so the
+            // parent must choose ETHEREUM rather than the first listed network.
+            await Assertions.Expect(usdtParent).ToHaveAttributeAsync("href", usdtPath);
+            Assert.Null(await usdtParent.GetAttributeAsync("data-bs-toggle"));
+            await Assertions.Expect(usdtParent.Locator("svg")).ToHaveCountAsync(0);
+            await usdtParent.ClickAsync();
+            await Assertions.Expect(page).ToHaveURLAsync(new System.Text.RegularExpressions.Regex(System.Text.RegularExpressions.Regex.Escape(usdtPath) + "$"));
             await Assertions.Expect(usdtNetwork).ToBeVisibleAsync();
-            await usdtNetwork.ClickAsync();
-            await Assertions.Expect(usdtToggle).ToHaveAttributeAsync("aria-expanded", "true");
+            await Assertions.Expect(settingsChild).ToHaveCountAsync(0);
+            await Assertions.Expect(usdtParent).ToHaveClassAsync(active);
             await Assertions.Expect(usdtNetwork).ToHaveClassAsync(new System.Text.RegularExpressions.Regex("active"));
             await Assertions.Expect(networks).Not.ToBeVisibleAsync();
             await page.ScreenshotAsync(new() { Path = Path.Combine(screenshots, "wallet-navigation-usdt-active.png") });
+            await page.Locator("#Enabled").UncheckAsync();
+            await page.Locator("#SaveButton").ClickAsync();
+            var tronPath = $"/stores/{storeId}/tronUSDtlike/USDT-TRON";
+            await Assertions.Expect(usdtParent).ToHaveAttributeAsync("href", tronPath);
+            await Assertions.Expect(usdtParent.Locator(".btcpay-status--pending")).ToHaveCountAsync(1);
+            await usdtParent.ClickAsync();
+            await Assertions.Expect(page).ToHaveURLAsync(new System.Text.RegularExpressions.Regex(System.Text.RegularExpressions.Regex.Escape(tronPath) + "$"));
+            await Assertions.Expect(usdtNetworks.Locator($"a[href='{tronPath}']")).ToHaveClassAsync(active);
+            await Assertions.Expect(settingsChild).ToHaveCountAsync(0);
+            await page.GotoAsync(usdtPath);
+            await page.Locator("#Enabled").CheckAsync();
+            await page.Locator("#SaveButton").ClickAsync();
             await page.GotoAsync(path);
-            await Assertions.Expect(toggle).ToHaveAttributeAsync("aria-expanded", "true");
+            await Assertions.Expect(parent).ToHaveClassAsync(active);
             await Assertions.Expect(usdtNetworks).Not.ToBeVisibleAsync();
         }
         await page.SetViewportSizeAsync(viewport.Width, viewport.Height);
