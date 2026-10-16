@@ -39,7 +39,7 @@ public partial class HostSmokeTests
     public Task PublishedPluginWorksAlongsideUSDtOnMainnet() => RunLifecycle(true, mainnet: true);
 
     [CoInstallFact]
-    public Task BrowserConfigurationAndCheckoutWorkAlongsideUSDt() => RunLifecycle(true, browserCase: true);
+    public Task BrowserConfigurationAndCheckoutWorkAlongsideUSDt() => RunLifecycle(true, browserCase: true, mainnet: true);
 
     [DatabaseFact]
     public Task ShutdownDeadlineDuringRpcRequestDoesNotReportPluginCrash() => RunLifecycle(false, shutdownCase: true);

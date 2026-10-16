@@ -132,24 +132,32 @@ public partial class HostSmokeTests
         await page.Locator("#Password").FillAsync(password);
         await page.Locator("#LoginButton").ClickAsync();
         await page.WaitForURLAsync(url => !new Uri(url).AbsolutePath.Equals("/login"));
-        var path = $"/stores/{storeId}/evmUSDClike/USDC-SEPOLIA";
+        var chain = node.ChainId == 1 ? "ETHEREUM" : "SEPOLIA";
+        var methodId = $"USDC-{chain}";
+        var displayName = node.ChainId == 1 ? "USDC on Ethereum" : "USDC on Sepolia (testnet)";
+        var path = $"/stores/{storeId}/evmUSDClike/{methodId}";
         await page.GotoAsync(path);
-        await Assertions.Expect(page.Locator("h3").Filter(new() { HasText = "USDC on Sepolia" })).ToBeVisibleAsync();
+        await Assertions.Expect(page.Locator("h3").Filter(new() { HasText = displayName })).ToBeVisibleAsync();
         await Assertions.Expect(page.Locator($"a[href='/stores/{storeId}/evmUSDClike/USDC-AMOY']")).ToHaveCountAsync(0);
         var wallet = page.Locator($"#Nav-Wallets a[href='{path}']");
         await Assertions.Expect(wallet).ToHaveCountAsync(1);
-        await Assertions.Expect(wallet).ToHaveTextAsync("USDC on Sepolia (testnet)");
+        await Assertions.Expect(wallet).ToHaveTextAsync(chain);
         await Assertions.Expect(wallet.Locator(".btcpay-status--enabled")).ToHaveCountAsync(1);
-        await Assertions.Expect(wallet.Locator("..")).Not.ToHaveClassAsync(new System.Text.RegularExpressions.Regex("nav-item-sub"));
+        await Assertions.Expect(wallet.Locator("..")).ToHaveClassAsync(new System.Text.RegularExpressions.Regex("nav-item-sub"));
+        var parent = page.Locator("#Nav-USDC-Toggle");
+        await Assertions.Expect(parent.Locator(".btcpay-status--enabled")).ToHaveCountAsync(1);
+        await AssertWalletNavigation(page, storeId, path, chain, screenshots);
         await AssertServerMenuHover(page, screenshots);
+        await Assertions.Expect(page.Locator($"#globalNavServerMenu a[href='/server/evmUSDClike/{methodId}']")).ToHaveTextAsync($"USDC on {chain}");
 
         node.FailRequests = true;
-        await host.Services.GetRequiredService<EVMUSDCRPCProvider>().UpdateSummary(new PaymentMethodId("USDC-SEPOLIA"));
-        await page.ReloadAsync();
-        await Assertions.Expect(wallet.Locator(".btcpay-status--disabled")).ToHaveCountAsync(1);
+        await host.Services.GetRequiredService<EVMUSDCRPCProvider>().UpdateSummary(new PaymentMethodId(methodId));
+        await page.GotoAsync($"/stores/{storeId}/settings");
+        await Assertions.Expect(parent.Locator(".btcpay-status--disabled")).ToHaveCountAsync(1);
+        await Assertions.Expect(wallet).Not.ToBeVisibleAsync();
         node.FailRequests = false;
-        await host.Services.GetRequiredService<EVMUSDCRPCProvider>().UpdateSummary(new PaymentMethodId("USDC-SEPOLIA"));
-        await page.ReloadAsync();
+        await host.Services.GetRequiredService<EVMUSDCRPCProvider>().UpdateSummary(new PaymentMethodId(methodId));
+        await page.GotoAsync(path);
         // Validate server-rendered errors and preserve submitted invalid values.
         await page.Locator("#Address").FillAsync("bad-address");
         await page.GetByRole(AriaRole.Button, new() { Name = "Add address(es)", Exact = true }).ClickAsync();
@@ -167,6 +175,10 @@ public partial class HostSmokeTests
         await page.GetByRole(AriaRole.Button, new() { Name = "Add address(es)", Exact = true }).ClickAsync();
         await Assertions.Expect(page.Locator("#Enabled")).Not.ToBeCheckedAsync();
         await Assertions.Expect(wallet.Locator(".btcpay-status--pending")).ToHaveCountAsync(1);
+        await page.GotoAsync($"/stores/{storeId}/settings");
+        await Assertions.Expect(parent.Locator(".btcpay-status--pending")).ToHaveCountAsync(1);
+        await Assertions.Expect(parent).ToHaveAttributeAsync("aria-expanded", "false");
+        await page.GotoAsync(path);
         await Assertions.Expect(page.Locator("#PaymentLinkFormat")).ToHaveValueAsync("3");
         await Assertions.Expect(page.Locator("#PaymentLinkTemplate")).ToHaveValueAsync(template);
         await Assertions.Expect(page.Locator("#StoreUsersList")).ToContainTextAsync(added);
@@ -175,7 +187,7 @@ public partial class HostSmokeTests
         // Cookie-authenticated POST without an antiforgery token must be rejected.
         var csrf = await context.APIRequest.PostAsync(path + "/addresses/" + added + "/delete");
         Assert.Equal(400, csrf.Status);
-        var infoPath = $"/api/v1/stores/{storeId}/evmUSDClike/USDC-SEPOLIA";
+        var infoPath = $"/api/v1/stores/{storeId}/evmUSDClike/{methodId}";
         using var anonymous = new HttpClient { BaseAddress = new Uri(address) };
         Assert.Equal(HttpStatusCode.Unauthorized, (await anonymous.GetAsync(infoPath)).StatusCode);
         using var authorized = new HttpClient { BaseAddress = new Uri(address) };
@@ -186,8 +198,8 @@ public partial class HostSmokeTests
         Assert.Equal(storeId, json["storeId"]!.Value<string>());
         Assert.False(json["enabled"]!.Value<bool>());
         Assert.Contains(json["addresses"]!, a => a["value"]!.Value<string>() == added && a["available"]!.Value<bool>());
-        Assert.Equal(HttpStatusCode.NotFound, (await authorized.GetAsync(infoPath.Replace("USDC-SEPOLIA", "USDC-AMOY"))).StatusCode);
-        Assert.Equal(HttpStatusCode.NotFound, (await authorized.GetAsync(infoPath.Replace("USDC-SEPOLIA", "USDC-UNKNOWN"))).StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, (await authorized.GetAsync(infoPath.Replace(methodId, "USDC-AMOY"))).StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, (await authorized.GetAsync(infoPath.Replace(methodId, "USDC-UNKNOWN"))).StatusCode);
 
         // Real Greenfield API keys must enforce the documented store-view scope.
         using var scopedClient = new HttpClient { BaseAddress = new Uri(address) };
@@ -223,7 +235,7 @@ public partial class HostSmokeTests
         var invoice = await api.CreateInvoice(storeId, new CreateInvoiceRequest
         {
             Currency = "USDC", Amount = 1.234567m,
-            Checkout = new InvoiceDataBase.CheckoutOptions { PaymentMethods = ["USDC-SEPOLIA"], LazyPaymentMethods = false, SpeedPolicy = SpeedPolicy.HighSpeed }
+            Checkout = new InvoiceDataBase.CheckoutOptions { PaymentMethods = [methodId], LazyPaymentMethods = false, SpeedPolicy = SpeedPolicy.HighSpeed }
         });
         var method = (await api.GetInvoicePaymentMethods(invoice.Id)).Single();
         Assert.Contains("uint256=1234567", method.PaymentLink);
@@ -231,7 +243,7 @@ public partial class HostSmokeTests
         await File.WriteAllTextAsync(Path.Combine(screenshots, "usdc-checkout.html"), await page.ContentAsync());
         await Assertions.Expect(page.Locator("body")).ToContainTextAsync("USDC");
         await Assertions.Expect(page.Locator("body")).ToContainTextAsync("1.234567");
-        await Assertions.Expect(page.GetByTestId("usdc-checkout-network")).ToHaveTextAsync("USDC on Sepolia (testnet)");
+        await Assertions.Expect(page.GetByTestId("usdc-checkout-network")).ToHaveTextAsync(displayName);
         await Assertions.Expect(page.Locator(".qr-container")).ToHaveAttributeAsync("data-qr-value", method.PaymentLink);
         await Assertions.Expect(page.Locator(".qr-container svg")).ToBeVisibleAsync();
         await Assertions.Expect(page.Locator(".qr-container")).ToHaveAttributeAsync("data-clipboard", method.PaymentLink);
@@ -249,9 +261,10 @@ public partial class HostSmokeTests
         await Eventually(async () => (await api.GetInvoice(invoice.Id)).Status == InvoiceStatus.Settled);
         await page.GotoAsync($"/invoices/{invoice.Id}");
         var paymentDetails = page.GetByTestId("usdc-payment-details");
-        await Assertions.Expect(paymentDetails).ToContainTextAsync("USDC-SEPOLIA");
+        await Assertions.Expect(paymentDetails).ToContainTextAsync(methodId);
         await Assertions.Expect(paymentDetails).ToContainTextAsync("1.234567 USDC");
-        await Assertions.Expect(paymentDetails.Locator("a")).ToHaveAttributeAsync("href", new System.Text.RegularExpressions.Regex("^https://sepolia.etherscan.io/tx/0x[0-9a-f]{64}$"));
+        var explorer = node.ChainId == 1 ? "etherscan.io" : "sepolia.etherscan.io";
+        await Assertions.Expect(paymentDetails.Locator("a")).ToHaveAttributeAsync("href", new System.Text.RegularExpressions.Regex($"^https://{System.Text.RegularExpressions.Regex.Escape(explorer)}/tx/0x[0-9a-f]{{64}}$"));
         await page.ScreenshotAsync(new() { Path = Path.Combine(screenshots, "usdc-invoice-payment.png"), FullPage = true });
         node.ForkFrom(102, 1);
         var invoices = host.Services.GetRequiredService<InvoiceRepository>();
@@ -271,6 +284,66 @@ public partial class HostSmokeTests
         await page.GetByRole(AriaRole.Button, new() { Name = "Upload", Exact = true }).ClickAsync();
         await Assertions.Expect(page.Locator("body")).ToContainTextAsync("Files uploaded, restart server to load plugins");
         await page.ScreenshotAsync(new() { Path = Path.Combine(screenshots, "usdc-package-installed.png"), FullPage = true });
+    }
+
+    private static async Task AssertWalletNavigation(IPage page, string storeId, string path, string chain, string screenshots)
+    {
+        var viewport = page.ViewportSize!;
+        await page.SetViewportSizeAsync(1280, 1000);
+        var toggle = page.Locator("#Nav-USDC-Toggle");
+        var networks = page.Locator("#Nav-USDC-Networks");
+        var network = networks.Locator($"a[href='{path}']");
+        var open = new System.Text.RegularExpressions.Regex("(^| )show( |$)");
+        await Assertions.Expect(toggle).ToHaveAttributeAsync("aria-expanded", "true");
+        await Assertions.Expect(networks).ToHaveClassAsync(open);
+        await Assertions.Expect(network).ToHaveClassAsync(new System.Text.RegularExpressions.Regex("active"));
+
+        // USDC also supports already-released USDt versions. Check the paired
+        // navigation when the reference package supplies the new toggle.
+        var usdtToggle = page.Locator("#Nav-USDt-Toggle");
+        var pairedNavigation = await usdtToggle.CountAsync() == 1;
+        var suffix = pairedNavigation ? "usdc-usdt" : "usdc";
+        await page.GotoAsync($"/stores/{storeId}/settings");
+        await Assertions.Expect(toggle).ToHaveAttributeAsync("aria-expanded", "false");
+        await Assertions.Expect(networks).Not.ToBeVisibleAsync();
+        await Assertions.Expect(toggle.Locator(".btcpay-status--enabled")).ToHaveCountAsync(1);
+        if (pairedNavigation)
+        {
+            await Assertions.Expect(usdtToggle).ToHaveAttributeAsync("aria-expanded", "false");
+            await Assertions.Expect(usdtToggle.Locator(".btcpay-status--enabled")).ToHaveCountAsync(1);
+        }
+        await page.ScreenshotAsync(new() { Path = Path.Combine(screenshots, $"wallet-navigation-collapsed-{suffix}.png") });
+        await toggle.ClickAsync();
+        await Assertions.Expect(networks).ToHaveClassAsync(open);
+        await Assertions.Expect(network).ToBeVisibleAsync();
+        await page.ScreenshotAsync(new() { Path = Path.Combine(screenshots, $"wallet-navigation-expanded-{suffix}.png") });
+        await toggle.PressAsync("Enter");
+        await Assertions.Expect(networks).Not.ToBeVisibleAsync();
+        await toggle.PressAsync("Enter");
+        await Assertions.Expect(networks).ToHaveClassAsync(open);
+        await network.ClickAsync();
+        await Assertions.Expect(page).ToHaveURLAsync(new System.Text.RegularExpressions.Regex(System.Text.RegularExpressions.Regex.Escape(path) + "$"));
+        await Assertions.Expect(toggle).ToHaveAttributeAsync("aria-expanded", "true");
+
+        if (pairedNavigation)
+        {
+            var usdtNetworks = page.Locator("#Nav-USDt-Networks");
+            var usdtPath = $"/stores/{storeId}/evmUSDtlike/USDT-{chain}";
+            var usdtNetwork = usdtNetworks.Locator($"a[href='{usdtPath}']");
+            await Assertions.Expect(usdtNetworks).Not.ToBeVisibleAsync();
+            await usdtToggle.ClickAsync();
+            await Assertions.Expect(usdtNetworks).ToHaveClassAsync(open);
+            await Assertions.Expect(usdtNetwork).ToBeVisibleAsync();
+            await usdtNetwork.ClickAsync();
+            await Assertions.Expect(usdtToggle).ToHaveAttributeAsync("aria-expanded", "true");
+            await Assertions.Expect(usdtNetwork).ToHaveClassAsync(new System.Text.RegularExpressions.Regex("active"));
+            await Assertions.Expect(networks).Not.ToBeVisibleAsync();
+            await page.ScreenshotAsync(new() { Path = Path.Combine(screenshots, "wallet-navigation-usdt-active.png") });
+            await page.GotoAsync(path);
+            await Assertions.Expect(toggle).ToHaveAttributeAsync("aria-expanded", "true");
+            await Assertions.Expect(usdtNetworks).Not.ToBeVisibleAsync();
+        }
+        await page.SetViewportSizeAsync(viewport.Width, viewport.Height);
     }
 
     private static async Task AssertServerMenuHover(IPage page, string screenshots)
