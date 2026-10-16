@@ -45,7 +45,9 @@ public class EVMUSDCListener(
     {
         _cts?.Cancel();
         try { await _workers.WaitAsync(cancellationToken); }
-        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested) { }
+        // A host shutdown deadline is expected cancellation. Letting it escape
+        // makes BTCPay classify the restart as a plugin crash and disable USDC.
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested || _cts?.IsCancellationRequested is true) { }
         finally { if (_workers.IsCompleted) { _cts?.Dispose(); _cts = null; } }
     }
 

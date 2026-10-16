@@ -18,6 +18,7 @@
     </ProjectReference>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <EmbeddedResource Include="../../docs/assets/usdc.svg" LogicalName="BTCPayServer.Plugins.USDC.usdc.svg" />
     <ProjectReference Include="../../submodules/btcpayserver/BTCPayServer/BTCPayServer.csproj" />
     <PackageReference Include="Nethereum.Web3" Version="6.1.0" />
     <PackageReference Include="Nethereum.StandardTokenEIP20" Version="6.1.0" />

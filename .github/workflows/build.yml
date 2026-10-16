@@ -34,7 +34,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: btcpayserver-tether/BTCPayServer.Plugins.USDt
-          ref: f1b3da1bc1ff2131cde946b938a2669e31f8fcc7
+          ref: 3d5399e603b4d71416e55219c7591c1db8c1815f
           path: artifacts/reference-usdt
           submodules: recursive
       - run: dotnet publish Plugins/BTCPayServer.Plugins.USDC -c Release -m:1 -p:StaticWebAssetsEnabled=false -o artifacts/usdc

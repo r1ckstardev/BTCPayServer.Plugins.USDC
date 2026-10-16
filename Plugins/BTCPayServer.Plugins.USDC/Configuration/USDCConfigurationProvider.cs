@@ -14,6 +14,17 @@ namespace BTCPayServer.Plugins.USDC.Configuration;
 
 public static class USDCConfigurationProvider
 {
+    private static readonly string CryptoImage = LoadCryptoImage();
+
+    private static string LoadCryptoImage()
+    {
+        using var icon = typeof(USDCConfigurationProvider).Assembly.GetManifestResourceStream("BTCPayServer.Plugins.USDC.usdc.svg")
+            ?? throw new InvalidOperationException("The USDC logo resource is missing.");
+        using var buffer = new System.IO.MemoryStream();
+        icon.CopyTo(buffer);
+        return "data:image/svg+xml;base64," + Convert.ToBase64String(buffer.ToArray());
+    }
+
     // Native USDC, not bridged USDC.e. Source: developers.circle.com/stablecoins/usdc-contract-addresses
     public const string MainnetContract = "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48";
     public const string SepoliaContract = "0x1c7d4b196cb0c7b01d743fbc6116a902379c7238";
@@ -51,7 +62,7 @@ public static class USDCConfigurationProvider
             ChainId = mainnet ? 1 : 11155111,
             JsonRpcUri = new Uri(mainnet ? "https://ethereum.publicnode.com" : "https://sepolia.publicnode.com"),
             BlockExplorerLink = mainnet ? "https://etherscan.io/tx/{0}" : "https://sepolia.etherscan.io/tx/{0}",
-            CryptoImagePath = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Ccircle cx='32' cy='32' r='32' fill='%232775ca'/%3E%3Ctext x='32' y='38' text-anchor='middle' font-family='sans-serif' font-size='17' fill='white'%3EUSDC%3C/text%3E%3C/svg%3E",
+            CryptoImagePath = CryptoImage,
             DefaultRateRules = ["USDC_USD = 1", "USDC_BTC = USD_BTC", "USDC_X = USDC_BTC * BTC_X"]
         };
     }

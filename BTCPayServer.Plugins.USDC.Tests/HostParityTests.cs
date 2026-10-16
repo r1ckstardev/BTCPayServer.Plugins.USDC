@@ -136,6 +136,20 @@ public partial class HostSmokeTests
         await page.GotoAsync(path);
         await Assertions.Expect(page.Locator("h3").Filter(new() { HasText = "USDC on Sepolia" })).ToBeVisibleAsync();
         await Assertions.Expect(page.Locator($"a[href='/stores/{storeId}/evmUSDClike/USDC-AMOY']")).ToHaveCountAsync(0);
+        var wallet = page.Locator($"#Nav-Wallets a[href='{path}']");
+        await Assertions.Expect(wallet).ToHaveCountAsync(1);
+        await Assertions.Expect(wallet).ToHaveTextAsync("USDC on Sepolia (testnet)");
+        await Assertions.Expect(wallet.Locator(".btcpay-status--enabled")).ToHaveCountAsync(1);
+        await Assertions.Expect(wallet.Locator("..")).Not.ToHaveClassAsync(new System.Text.RegularExpressions.Regex("nav-item-sub"));
+        await AssertServerMenuHover(page, screenshots);
+
+        node.FailRequests = true;
+        await host.Services.GetRequiredService<EVMUSDCRPCProvider>().UpdateSummary(new PaymentMethodId("USDC-SEPOLIA"));
+        await page.ReloadAsync();
+        await Assertions.Expect(wallet.Locator(".btcpay-status--disabled")).ToHaveCountAsync(1);
+        node.FailRequests = false;
+        await host.Services.GetRequiredService<EVMUSDCRPCProvider>().UpdateSummary(new PaymentMethodId("USDC-SEPOLIA"));
+        await page.ReloadAsync();
         // Validate server-rendered errors and preserve submitted invalid values.
         await page.Locator("#Address").FillAsync("bad-address");
         await page.GetByRole(AriaRole.Button, new() { Name = "Add address(es)", Exact = true }).ClickAsync();
@@ -152,6 +166,7 @@ public partial class HostSmokeTests
         await page.Locator("#Address").FillAsync(added);
         await page.GetByRole(AriaRole.Button, new() { Name = "Add address(es)", Exact = true }).ClickAsync();
         await Assertions.Expect(page.Locator("#Enabled")).Not.ToBeCheckedAsync();
+        await Assertions.Expect(wallet.Locator(".btcpay-status--pending")).ToHaveCountAsync(1);
         await Assertions.Expect(page.Locator("#PaymentLinkFormat")).ToHaveValueAsync("3");
         await Assertions.Expect(page.Locator("#PaymentLinkTemplate")).ToHaveValueAsync(template);
         await Assertions.Expect(page.Locator("#StoreUsersList")).ToContainTextAsync(added);
@@ -220,6 +235,14 @@ public partial class HostSmokeTests
         await Assertions.Expect(page.Locator(".qr-container")).ToHaveAttributeAsync("data-qr-value", method.PaymentLink);
         await Assertions.Expect(page.Locator(".qr-container svg")).ToBeVisibleAsync();
         await Assertions.Expect(page.Locator(".qr-container")).ToHaveAttributeAsync("data-clipboard", method.PaymentLink);
+        var icon = page.Locator(".qr-container .qr-icon");
+        await Assertions.Expect(icon).ToBeVisibleAsync();
+        var image = await icon.GetAttributeAsync("src");
+        const string imagePrefix = "data:image/svg+xml;base64,";
+        Assert.StartsWith(imagePrefix, image);
+        Assert.Equal(await File.ReadAllBytesAsync(Path.Combine(RepositoryRoot(), "docs", "assets", "usdc.svg")),
+            Convert.FromBase64String(image![imagePrefix.Length..]));
+        Assert.True(await icon.EvaluateAsync<bool>("img => img.complete && img.naturalWidth > 0"));
         await page.ScreenshotAsync(new() { Path = Path.Combine(screenshots, "usdc-checkout.png"), FullPage = true });
         node.Transfer(102, method.Destination, 1234567);
         node.FinalizedHeight = 107;
@@ -239,12 +262,34 @@ public partial class HostSmokeTests
         await page.ScreenshotAsync(new() { Path = Path.Combine(screenshots, "usdc-reconciliation.png"), FullPage = true });
         // Exercise BTCPay's actual package upload and queued installation. The
         // caller restarts the host and compares the installed assembly hash.
-        var package = Directory.GetFiles(Path.Combine(RepositoryRoot(), "artifacts", "packed"), "*.btcpay", SearchOption.AllDirectories).Single();
+        var package = Path.Combine(RepositoryRoot(), "artifacts", "packed", "BTCPayServer.Plugins.USDC",
+            typeof(USDCPlugin).Assembly.GetName().Version!.ToString(), "BTCPayServer.Plugins.USDC.btcpay");
+        Assert.True(File.Exists(package));
         await page.GotoAsync("/server/plugins");
         await page.GetByRole(AriaRole.Button, new() { Name = "Upload Plugin", Exact = true }).ClickAsync();
         await page.Locator("#files").SetInputFilesAsync(package);
         await page.GetByRole(AriaRole.Button, new() { Name = "Upload", Exact = true }).ClickAsync();
         await Assertions.Expect(page.Locator("body")).ToContainTextAsync("Files uploaded, restart server to load plugins");
         await page.ScreenshotAsync(new() { Path = Path.Combine(screenshots, "usdc-package-installed.png"), FullPage = true });
+    }
+
+    private static async Task AssertServerMenuHover(IPage page, string screenshots)
+    {
+        await page.Locator("#globalNavServerToggle").ClickAsync();
+        var builtIn = page.Locator("#menu-item-Policies");
+        const string style = "el => { const s = getComputedStyle(el); return JSON.stringify([s.backgroundColor, s.color, s.paddingTop, s.paddingRight, s.paddingBottom, s.paddingLeft]); }";
+        await builtIn.HoverAsync();
+        await builtIn.EvaluateAsync("async el => { await Promise.all(el.getAnimations().map(animation => animation.finished.catch(() => {}))); }");
+        var expectedHover = await builtIn.EvaluateAsync<string>(style);
+        var links = page.Locator("#globalNavServerMenu a").Filter(new() { HasText = "USDC on " });
+        Assert.True(await links.CountAsync() > 0);
+        foreach (var link in await links.AllAsync())
+        {
+            await link.HoverAsync();
+            await Assertions.Expect(link).ToHaveCSSAsync("background-color", JArray.Parse(expectedHover)[0]!.Value<string>()!);
+            Assert.Equal(expectedHover, await link.EvaluateAsync<string>(style));
+        }
+        await page.ScreenshotAsync(new() { Path = Path.Combine(screenshots, "usdc-server-menu.png"), FullPage = true });
+        await page.Locator("#globalNavServerToggle").ClickAsync();
     }
 }

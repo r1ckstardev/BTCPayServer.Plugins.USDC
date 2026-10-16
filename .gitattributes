@@ -1,0 +1,2 @@
+# Keep text files in LF in both Git and working trees; preserve detected binaries.
+* text=auto eol=lf
