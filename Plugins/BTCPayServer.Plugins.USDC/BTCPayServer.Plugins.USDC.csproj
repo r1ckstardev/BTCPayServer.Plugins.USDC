@@ -4,7 +4,7 @@
     <Nullable>enable</Nullable>
     <Product>USDC</Product>
     <Description>Accept native USDC payments on Ethereum directly to your own wallet with BTCPay Server.</Description>
-    <Version>0.0.4</Version>
+    <Version>0.0.5</Version>
     <AddRazorSupportForMvc>true</AddRazorSupportForMvc>
     <PreserveCompilationContext>false</PreserveCompilationContext>
     <GenerateEmbeddedFilesManifest>true</GenerateEmbeddedFilesManifest>
